@@ -1,4 +1,5 @@
 import { Context, Data, Effect, Schema } from "effect"
+import type { TenantId } from "../domain/tenant.ts"
 
 export const VectorDocumentId = Schema.Struct({
   documentId: Schema.String,
@@ -22,9 +23,16 @@ export class VectorIndexError extends Data.TaggedError("VectorIndexError")<{
 export class VectorIndex extends Context.Tag("VectorIndex")<
   VectorIndex,
   {
-    upsert(documentId: string, model: string, dims: number, vector: Uint8Array): Effect.Effect<void, VectorIndexError>
-    removeByDocument(documentId: string): Effect.Effect<void, VectorIndexError>
+    upsert(
+      tenantId: TenantId,
+      documentId: string,
+      model: string,
+      dims: number,
+      vector: Uint8Array,
+    ): Effect.Effect<void, VectorIndexError>
+    removeByDocument(tenantId: TenantId, documentId: string): Effect.Effect<void, VectorIndexError>
     search(
+      tenantId: TenantId,
       query: Uint8Array,
       dims: number,
       topK: number,

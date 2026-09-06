@@ -6,6 +6,7 @@ import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { ConfigError, Context, Effect, Layer } from "effect";
 import { AppConfigTag, type AppConfig } from "@finch/core";
 import * as schema from "./schema/index.ts";
+import { loadVecExtension } from "./vec-loader.ts";
 
 export type BunSQLiteDrizzle = BunSQLiteDatabase<typeof schema>;
 
@@ -28,7 +29,7 @@ export const SqliteLive: Layer.Layer<Db, ConfigError.ConfigError, AppConfig> = L
   Db,
   Effect.gen(function* () {
     const { databaseUrl } = yield* AppConfigTag;
-    return yield* Effect.try({
+    const sqlite = yield* Effect.try({
       try: () => {
         const path = parsePath(databaseUrl);
         if (path !== ":memory:") {
@@ -37,11 +38,10 @@ export const SqliteLive: Layer.Layer<Db, ConfigError.ConfigError, AppConfig> = L
             mkdirSync(dir, { recursive: true });
           }
         }
-        const sqlite = new Database(path, { create: true });
-        sqlite.exec("PRAGMA journal_mode = WAL;");
-        sqlite.exec("PRAGMA foreign_keys = ON;");
-        const db = drizzle(sqlite, { schema });
-        return { db, sqlite };
+        const opened = new Database(path, { create: true });
+        opened.exec("PRAGMA journal_mode = WAL;");
+        opened.exec("PRAGMA foreign_keys = ON;");
+        return opened;
       },
       catch: (cause) =>
         ConfigError.InvalidData(
@@ -49,5 +49,16 @@ export const SqliteLive: Layer.Layer<Db, ConfigError.ConfigError, AppConfig> = L
           `failed to open sqlite database at ${JSON.stringify(databaseUrl)}: ${describeCause(cause)}`,
         ),
     });
+    // sqlite-vec must load before any vec0 table is touched (see 0004 migration).
+    yield* loadVecExtension(sqlite).pipe(
+      Effect.mapError(
+        (cause) =>
+          ConfigError.InvalidData(
+            ["SQLITE_VEC_PATH"],
+            `failed to load sqlite-vec extension: ${describeCause(cause.cause ?? cause)}`,
+          ),
+      ),
+    );
+    return { db: drizzle(sqlite, { schema }), sqlite };
   }),
 );

@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { Effect, Layer } from "effect";
 import { Db } from "../packages/db/src/client.ts";
+import { loadVecExtension } from "../packages/db/src/vec-loader.ts";
 import * as schema from "../packages/db/src/schema/index.ts";
 import { EventStoreLive, type EventStore } from "../packages/db/src/event-store.ts";
 import { ProjectionRunnerLive, type ProjectionRunner } from "../packages/db/src/projections/runner.ts";
@@ -46,6 +47,8 @@ export type TestServices =
 
 export const makeTestLayers = (sqlite: Database): Layer.Layer<TestServices, never, never> => {
   sqlite.exec("PRAGMA foreign_keys = ON;");
+  // 0004 creates a vec0 virtual table: the extension must load before migrate.
+  Effect.runSync(loadVecExtension(sqlite));
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: "packages/db/drizzle" });
   const DbLive = Layer.succeed(Db, { db, sqlite });

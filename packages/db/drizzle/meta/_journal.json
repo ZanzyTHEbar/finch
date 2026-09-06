@@ -29,6 +29,13 @@
       "when": 1788698824202,
       "tag": "0003_fix-fts-sync",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1788701465540,
+      "tag": "0004_vec-document-embeddings",
+      "breakpoints": true
     }
   ]
 }

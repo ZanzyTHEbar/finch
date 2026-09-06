@@ -14,3 +14,4 @@ export * from "./repositories/job.ts";
 export * from "./projections/search-documents.ts";
 export * from "./projections/summaries.ts";
 export * from "./projections/runner.ts";
+export * from "./vector-index.ts";
