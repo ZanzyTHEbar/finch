@@ -1,0 +1,15 @@
+{
+  "name": "@finch/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@finch/core": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "effect": "3.22.1",
+    "sqlite-vec": "0.1.9"
+  }
+}
