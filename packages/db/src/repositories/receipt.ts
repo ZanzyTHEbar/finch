@@ -1,8 +1,8 @@
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
-import { ReceiptNotFound, StorageUnavailable, type TenantId } from "@finch/core";
+import { ReceiptNotFound, StorageUnavailable, TransactionNotFound, type TenantId } from "@finch/core";
 import { Db } from "../client.ts";
-import { receipts } from "../schema/index.ts";
+import { receipts, transactions } from "../schema/index.ts";
 
 export type ReceiptRow = typeof receipts.$inferSelect;
 export type ReceiptInsert = Omit<typeof receipts.$inferInsert, "tenantId">;
@@ -22,7 +22,7 @@ export class ReceiptRepository extends Context.Tag("ReceiptRepository")<
       tenantId: TenantId,
       receiptId: string,
       transactionId: string,
-    ) => Effect.Effect<ReceiptRow, ReceiptNotFound | StorageUnavailable>;
+    ) => Effect.Effect<ReceiptRow, ReceiptNotFound | TransactionNotFound | StorageUnavailable>;
     readonly listUnmatched: (
       tenantId: TenantId,
       limit?: number,
@@ -76,8 +76,22 @@ export const ReceiptRepositoryLive: Layer.Layer<ReceiptRepository, never, Db> = 
       tenantId: TenantId,
       receiptId: string,
       transactionId: string,
-    ): Effect.Effect<ReceiptRow, ReceiptNotFound | StorageUnavailable> =>
+    ): Effect.Effect<ReceiptRow, ReceiptNotFound | TransactionNotFound | StorageUnavailable> =>
       Effect.gen(function* () {
+        // FKs only prove the transaction id exists, not that it belongs to
+        // this tenant — refuse cross-tenant links before touching the receipt.
+        const tx = yield* Effect.try({
+          try: () =>
+            db
+              .select({ id: transactions.id })
+              .from(transactions)
+              .where(and(eq(transactions.tenantId, tenantId), eq(transactions.id, transactionId)))
+              .get(),
+          catch: (cause) => new StorageUnavailable({ cause }),
+        });
+        if (tx === undefined) {
+          return yield* new TransactionNotFound({ transactionId });
+        }
         const linked = yield* Effect.try({
           try: () =>
             db

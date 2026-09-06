@@ -3,12 +3,13 @@ import { Context, Effect, Layer } from "effect";
 import {
   ReconciliationConflict,
   StorageUnavailable,
+  TenantMismatch,
   nowInstant,
   uuidv7,
   type TenantId,
 } from "@finch/core";
 import { Db } from "../client.ts";
-import { reconciliations } from "../schema/index.ts";
+import { receipts, reconciliations, transactions } from "../schema/index.ts";
 
 export type ReconciliationRow = typeof reconciliations.$inferSelect;
 
@@ -25,17 +26,17 @@ export class ReconciliationRepository extends Context.Tag("ReconciliationReposit
     readonly propose: (
       tenantId: TenantId,
       input: ProposeInput,
-    ) => Effect.Effect<ReconciliationRow, StorageUnavailable>;
+    ) => Effect.Effect<ReconciliationRow, StorageUnavailable | TenantMismatch>;
     readonly confirm: (
       tenantId: TenantId,
       transactionId: string,
       receiptId: string,
-    ) => Effect.Effect<ReconciliationRow, ReconciliationConflict | StorageUnavailable>;
+    ) => Effect.Effect<ReconciliationRow, ReconciliationConflict | StorageUnavailable | TenantMismatch>;
     readonly reject: (
       tenantId: TenantId,
       transactionId: string,
       receiptId: string,
-    ) => Effect.Effect<ReconciliationRow, ReconciliationConflict | StorageUnavailable>;
+    ) => Effect.Effect<ReconciliationRow, ReconciliationConflict | StorageUnavailable | TenantMismatch>;
     readonly findByTransaction: (
       tenantId: TenantId,
       transactionId: string,
@@ -59,11 +60,43 @@ export const ReconciliationRepositoryLive: Layer.Layer<ReconciliationRepository,
           eq(reconciliations.receiptId, receiptId),
         );
 
+      // Both sides of a link must live under the calling tenant. A missing
+      // row and a foreign-tenant row are indistinguishable here on purpose:
+      // confirming existence across tenants would leak tenant membership.
+      const assertSameTenant = (
+        tenantId: TenantId,
+        transactionId: string,
+        receiptId: string,
+      ): Effect.Effect<void, StorageUnavailable | TenantMismatch> =>
+        Effect.gen(function* () {
+          const rows = yield* Effect.try({
+            try: () => ({
+              tx: db
+                .select({ id: transactions.id })
+                .from(transactions)
+                .where(
+                  and(eq(transactions.tenantId, tenantId), eq(transactions.id, transactionId)),
+                )
+                .get(),
+              rc: db
+                .select({ id: receipts.id })
+                .from(receipts)
+                .where(and(eq(receipts.tenantId, tenantId), eq(receipts.id, receiptId)))
+                .get(),
+            }),
+            catch: (cause) => new StorageUnavailable({ cause }),
+          });
+          if (rows.tx === undefined || rows.rc === undefined) {
+            return yield* new TenantMismatch();
+          }
+        });
+
       const propose = (
         tenantId: TenantId,
         input: ProposeInput,
-      ): Effect.Effect<ReconciliationRow, StorageUnavailable> =>
+      ): Effect.Effect<ReconciliationRow, StorageUnavailable | TenantMismatch> =>
         Effect.gen(function* () {
+          yield* assertSameTenant(tenantId, input.transactionId, input.receiptId);
           const row = yield* Effect.try({
             try: () =>
               db
@@ -102,8 +135,9 @@ export const ReconciliationRepositoryLive: Layer.Layer<ReconciliationRepository,
         tenantId: TenantId,
         transactionId: string,
         receiptId: string,
-      ): Effect.Effect<ReconciliationRow, ReconciliationConflict | StorageUnavailable> =>
+      ): Effect.Effect<ReconciliationRow, ReconciliationConflict | StorageUnavailable | TenantMismatch> =>
         Effect.gen(function* () {
+          yield* assertSameTenant(tenantId, transactionId, receiptId);
           const row = yield* Effect.try({
             try: () =>
               db

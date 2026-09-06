@@ -156,8 +156,8 @@ export const ProjectionRunnerLive: Layer.Layer<
         tenantId: TenantId,
         transactionId: string,
         receiptId: string,
-      ) => Effect.Effect<ReconciliationRow, ReconciliationConflict | StorageUnavailable>,
-    ): Effect.Effect<void, ReconciliationConflict | StorageUnavailable> =>
+      ) => Effect.Effect<ReconciliationRow, ReconciliationConflict | StorageUnavailable | TenantMismatch>,
+    ): Effect.Effect<void, ReconciliationConflict | StorageUnavailable | TenantMismatch> =>
       decide(tenantId, transactionId, receiptId).pipe(
         Effect.asVoid,
         Effect.catchTag("ReconciliationConflict", () =>
