@@ -79,7 +79,9 @@ describe("event append", () => {
               aggregateType: "transaction",
               aggregateId: "tx-seq",
               eventType: "TransactionObserved",
-              payload: observedPayload,
+              // ponytail: identical payloads now dedupe by default, so each
+              // sequenced append carries a distinct fingerprint.
+              payload: { ...observedPayload, sourceFingerprint: `fp-seq-${i}` },
               actor: "test",
             });
           }
@@ -124,6 +126,94 @@ describe("event append", () => {
         }),
       );
       expect(failure._tag).toBe("DuplicateEvent");
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("dedupes an identical retried append without a caller key", async () => {
+    const sqlite = new Database(":memory:");
+    try {
+      const layer = makeTestLayers(sqlite);
+      const failure = await runTest(
+        layer,
+        Effect.gen(function* () {
+          const store = yield* EventStore;
+          yield* seedTenant;
+          const retryInput = () => ({
+            tenantId: TID,
+            aggregateType: "transaction" as const,
+            aggregateId: "tx-retry",
+            eventType: "TransactionObserved",
+            payload: observedPayload,
+            actor: "test",
+          });
+          yield* store.append(retryInput());
+          return yield* Effect.flip(store.append(retryInput()));
+        }),
+      );
+      expect(failure._tag).toBe("DuplicateEvent");
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("appends distinct payloads with distinct default keys", async () => {
+    const sqlite = new Database(":memory:");
+    try {
+      const layer = makeTestLayers(sqlite);
+      const records = await runTest(
+        layer,
+        Effect.gen(function* () {
+          const store = yield* EventStore;
+          yield* seedTenant;
+          const first = yield* store.append({
+            tenantId: TID,
+            aggregateType: "transaction",
+            aggregateId: "tx-distinct",
+            eventType: "TransactionObserved",
+            payload: observedPayload,
+            actor: "test",
+          });
+          const second = yield* store.append({
+            tenantId: TID,
+            aggregateType: "transaction",
+            aggregateId: "tx-distinct",
+            eventType: "TransactionObserved",
+            payload: { ...observedPayload, sourceFingerprint: "fp-2" },
+            actor: "test",
+          });
+          return [first, second] as const;
+        }),
+      );
+      expect(records.map((r) => r.sequence)).toStrictEqual([1, 2]);
+      expect(records[0].idempotencyKey).not.toBe(records[1].idempotencyKey);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("honors an explicit caller-supplied idempotency key", async () => {
+    const sqlite = new Database(":memory:");
+    try {
+      const layer = makeTestLayers(sqlite);
+      const record = await runTest(
+        layer,
+        Effect.gen(function* () {
+          const store = yield* EventStore;
+          yield* seedTenant;
+          return yield* store.append({
+            tenantId: TID,
+            aggregateType: "transaction",
+            aggregateId: "tx-explicit",
+            eventType: "TransactionObserved",
+            payload: observedPayload,
+            actor: "test",
+            idempotencyKey: "caller-key-1",
+          });
+        }),
+      );
+      expect(record.idempotencyKey).toBe("caller-key-1");
     } finally {
       sqlite.close();
     }

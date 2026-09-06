@@ -7,6 +7,7 @@ import {
   StorageUnavailable,
   ValidationFailed,
   decodeJson,
+  defaultIdempotencyKey,
   encodeJson,
   nowInstant,
   uuidv7,
@@ -160,6 +161,18 @@ export const EventStoreLive: Layer.Layer<EventStore, never, Db> = Layer.effect(
             }),
           catch: (cause) => new StorageUnavailable({ cause }),
         });
+        // ponytail: default key hashes the canonical append identity (no
+        // sequence/timestamps) so a retry with a new sequence still collides.
+        const idempotencyKey =
+          input.idempotencyKey ??
+          defaultIdempotencyKey({
+            tenantId: input.tenantId,
+            aggregateType: input.aggregateType,
+            aggregateId: input.aggregateId,
+            eventType: input.eventType,
+            eventVersion,
+            payload: input.payload,
+          });
         const inserted = yield* Effect.try({
           try: (): EventRow =>
             db.transaction((tx) => {
@@ -175,9 +188,6 @@ export const EventStoreLive: Layer.Layer<EventStore, never, Db> = Layer.effect(
                 )
                 .get();
               const sequence = (peak?.value ?? 0) + 1;
-              const idempotencyKey =
-                input.idempotencyKey ??
-                `${input.aggregateType}:${input.aggregateId}:${String(sequence)}`;
               tx.insert(events)
                 .values({
                   id,

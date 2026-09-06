@@ -1,7 +1,8 @@
-import { randomBytes } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { Schema } from "effect"
 import { TenantId } from "../tenant.ts"
 import { UtcInstant } from "../time.ts"
+import { encodeJson } from "./codec.ts"
 
 export const AggregateType = Schema.Literal("account", "transaction", "receipt", "reconciliation", "summary")
 
@@ -60,6 +61,32 @@ export interface MakeEnvelopeInput {
   readonly idempotencyKey?: string
 }
 
+export interface DefaultIdempotencyKeyInput {
+  readonly tenantId: string
+  readonly aggregateType: string
+  readonly aggregateId: string
+  readonly eventType: string
+  readonly eventVersion: number
+  readonly payload: unknown
+}
+
+// ponytail: key covers the canonical append identity only (no sequence,
+// timestamps, or actor) so a retry computing a new sequence still hashes
+// identically and hits the idempotency unique constraint.
+export const defaultIdempotencyKey = (input: DefaultIdempotencyKeyInput): string =>
+  createHash("sha256")
+    .update(
+      encodeJson({
+        tenantId: input.tenantId,
+        aggregateType: input.aggregateType,
+        aggregateId: input.aggregateId,
+        eventType: input.eventType,
+        eventVersion: input.eventVersion,
+        payload: input.payload,
+      }),
+    )
+    .digest("hex")
+
 export const makeEnvelope = (input: MakeEnvelopeInput): EventEnvelope =>
   Schema.decodeUnknownSync(EventEnvelope)({
     id: input.id ?? uuidv7(),
@@ -71,5 +98,14 @@ export const makeEnvelope = (input: MakeEnvelopeInput): EventEnvelope =>
     eventVersion: input.eventVersion,
     payload: input.payload,
     metadata: input.metadata,
-    idempotencyKey: input.idempotencyKey ?? `${input.aggregateType}:${input.aggregateId}:${String(input.sequence)}`,
+    idempotencyKey:
+      input.idempotencyKey ??
+      defaultIdempotencyKey({
+        tenantId: input.tenantId,
+        aggregateType: input.aggregateType,
+        aggregateId: input.aggregateId,
+        eventType: input.eventType,
+        eventVersion: input.eventVersion,
+        payload: input.payload,
+      }),
   })
