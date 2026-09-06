@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/fusion.ts"
+    ".": "./src/fusion.ts",
+    "./hybrid": "./src/hybrid.ts"
   },
   "dependencies": {
     "@finch/core": "workspace:*",
+    "@finch/db": "workspace:*",
     "effect": "3.22.1",
     "voyageai": "0.4.0"
   }
