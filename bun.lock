@@ -58,6 +58,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@finch/core": "workspace:*",
+        "@finch/db": "workspace:*",
         "effect": "3.22.1",
         "voyageai": "0.4.0",
       },
