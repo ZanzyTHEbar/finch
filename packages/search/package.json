@@ -2,5 +2,11 @@
   "name": "@finch/search",
   "version": "0.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "exports": {
+    ".": "./src/fusion.ts"
+  },
+  "dependencies": {
+    "effect": "3.22.1"
+  }
 }
