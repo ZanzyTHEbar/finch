@@ -7,9 +7,15 @@ export const DatabaseUrl = Config.string("DATABASE_URL").pipe(
 
 export const SqliteVecPath = Config.string("SQLITE_VEC_PATH").pipe(Config.withDefault(""))
 
+export const VoyageApiKey = Config.string("VOYAGE_API_KEY").pipe(Config.withDefault(""))
+
+export const VoyageModel = Config.string("VOYAGE_MODEL").pipe(Config.withDefault("voyage-finance-2"))
+
 export interface AppConfig {
   readonly databaseUrl: string
   readonly sqliteVecPath: string
+  readonly voyageApiKey: string
+  readonly voyageModel: string
 }
 
 export const AppConfigTag = Context.GenericTag<AppConfig, AppConfig>("AppConfig")
@@ -19,5 +25,7 @@ export const AppConfigLive: Layer.Layer<AppConfig, ConfigError.ConfigError> = La
   Config.all({
     databaseUrl: DatabaseUrl,
     sqliteVecPath: SqliteVecPath,
+    voyageApiKey: VoyageApiKey,
+    voyageModel: VoyageModel,
   }),
 )
