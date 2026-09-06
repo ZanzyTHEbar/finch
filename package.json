@@ -5,7 +5,8 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun ./node_modules/vitest/vitest.mjs run"
+    "test": "bun ./node_modules/vitest/vitest.mjs run",
+    "eval": "bun evals/run-evals.ts"
   },
   "devDependencies": {
     "@types/bun": "1.4.1",

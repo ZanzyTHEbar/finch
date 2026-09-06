@@ -1,0 +1,13 @@
+{"id":"q-continente-exact","query":"Continente","expectedDocumentIds":["transaction:tx-continente-weekly"],"type":"exact"}
+{"id":"q-pingo-exact","query":"Pingo Doce","expectedDocumentIds":["transaction:tx-pingo-fresh"],"type":"exact"}
+{"id":"q-bp-exact","query":"BP fuel","expectedDocumentIds":["transaction:tx-bp-fuel"],"type":"exact"}
+{"id":"q-starbucks-exact","query":"Starbucks Lisboa","expectedDocumentIds":["receipt:rc-starbucks-lisboa"],"type":"exact"}
+{"id":"q-mcdonalds-exact","query":"McDonalds burger","expectedDocumentIds":["receipt:rc-mcdonalds"],"type":"exact"}
+{"id":"q-galp-exact","query":"Galp charging","expectedDocumentIds":["transaction:tx-galp-charge"],"type":"exact"}
+{"id":"q-edp-exact","query":"EDP electricity","expectedDocumentIds":["receipt:rc-edp-energy"],"type":"exact"}
+{"id":"q-coffee-semantic","query":"espresso morning brew","expectedDocumentIds":["receipt:rc-starbucks-lisboa"],"type":"semantic"}
+{"id":"q-ride-semantic","query":"cab terminal pickup","expectedDocumentIds":["transaction:tx-uber-airport"],"type":"semantic"}
+{"id":"q-power-semantic","query":"power invoice","expectedDocumentIds":["receipt:rc-edp-energy"],"type":"semantic"}
+{"id":"q-pharmacy-semantic","query":"headache pills remedy","expectedDocumentIds":["transaction:tx-farmacia-health"],"type":"semantic"}
+{"id":"q-groceries-aggregate","query":"groceries","expectedDocumentIds":["transaction:tx-continente-weekly","transaction:tx-pingo-fresh","transaction:tx-aucham-bulk"],"type":"aggregate"}
+{"id":"q-utilities-aggregate","query":"utilities monthly","expectedDocumentIds":["receipt:rc-nos-telecom","receipt:rc-edp-energy"],"type":"aggregate"}
