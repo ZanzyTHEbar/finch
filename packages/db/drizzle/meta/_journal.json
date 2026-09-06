@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1788697390727,
+      "tag": "0000_zippy_purifiers",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788697397443,
+      "tag": "0001_fts-triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788698264394,
+      "tag": "0002_same_shocker",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1788698824202,
+      "tag": "0003_fix-fts-sync",
+      "breakpoints": true
+    }
+  ]
+}
