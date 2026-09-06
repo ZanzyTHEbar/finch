@@ -23,6 +23,11 @@ export class SearchDocumentRepository extends Context.Tag("SearchDocumentReposit
     readonly listAll: (
       tenantId: TenantId,
     ) => Effect.Effect<readonly SearchDocumentRow[], StorageUnavailable>;
+    readonly findBySource: (
+      tenantId: TenantId,
+      sourceType: string,
+      sourceId: string,
+    ) => Effect.Effect<SearchDocumentRow | null, StorageUnavailable>;
     readonly count: (tenantId: TenantId) => Effect.Effect<number, StorageUnavailable>;
   }
 >() {}
@@ -105,6 +110,24 @@ export const SearchDocumentRepositoryLive: Layer.Layer<SearchDocumentRepository,
           catch: (cause) => new StorageUnavailable({ cause }),
         });
 
+      const findBySource = (
+        tenantId: TenantId,
+        sourceType: string,
+        sourceId: string,
+      ): Effect.Effect<SearchDocumentRow | null, StorageUnavailable> =>
+        Effect.map(
+          Effect.try({
+            try: () =>
+              db
+                .select()
+                .from(searchDocuments)
+                .where(scope(tenantId, sourceType, sourceId))
+                .get(),
+            catch: (cause) => new StorageUnavailable({ cause }),
+          }),
+          (row) => row ?? null,
+        );
+
       const countDocuments = (
         tenantId: TenantId,
       ): Effect.Effect<number, StorageUnavailable> =>
@@ -121,6 +144,6 @@ export const SearchDocumentRepositoryLive: Layer.Layer<SearchDocumentRepository,
           return row?.value ?? 0;
         });
 
-      return { upsert, removeBySource, listAll, count: countDocuments };
+      return { upsert, removeBySource, listAll, findBySource, count: countDocuments };
     }),
   );
