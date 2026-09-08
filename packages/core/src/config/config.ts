@@ -1,4 +1,5 @@
-import { Config, Context, Layer } from "effect"
+import { secrets } from "bun"
+import { Config, Context, Effect, Layer } from "effect"
 import type { ConfigError } from "effect"
 
 export const DatabaseUrl = Config.string("DATABASE_URL").pipe(
@@ -7,9 +8,25 @@ export const DatabaseUrl = Config.string("DATABASE_URL").pipe(
 
 export const SqliteVecPath = Config.string("SQLITE_VEC_PATH").pipe(Config.withDefault(""))
 
-export const VoyageApiKey = Config.string("VOYAGE_API_KEY").pipe(Config.withDefault(""))
-
 export const VoyageModel = Config.string("VOYAGE_MODEL").pipe(Config.withDefault("voyage-finance-2"))
+
+export const FINCH_SECRET_SERVICE = "finch"
+export const VOYAGE_API_KEY_SECRET_NAME = "VOYAGE_API_KEY"
+
+// Keyring (Bun.secrets / libsecret schema com.oven-sh.bun.Secret) is the
+// source of truth. VOYAGE_API_KEY in the environment wins when set so tests
+// can inject a canned key without touching the keyring.
+export const loadVoyageApiKey = async (): Promise<string> => {
+  const fromEnv = process.env["VOYAGE_API_KEY"]
+  if (fromEnv !== undefined && fromEnv !== "") {
+    return fromEnv
+  }
+  const fromKeyring = await secrets.get({
+    service: FINCH_SECRET_SERVICE,
+    name: VOYAGE_API_KEY_SECRET_NAME,
+  })
+  return fromKeyring ?? ""
+}
 
 export interface AppConfig {
   readonly databaseUrl: string
@@ -22,10 +39,13 @@ export const AppConfigTag = Context.GenericTag<AppConfig, AppConfig>("AppConfig"
 
 export const AppConfigLive: Layer.Layer<AppConfig, ConfigError.ConfigError> = Layer.effect(
   AppConfigTag,
-  Config.all({
-    databaseUrl: DatabaseUrl,
-    sqliteVecPath: SqliteVecPath,
-    voyageApiKey: VoyageApiKey,
-    voyageModel: VoyageModel,
+  Effect.gen(function* () {
+    const base = yield* Config.all({
+      databaseUrl: DatabaseUrl,
+      sqliteVecPath: SqliteVecPath,
+      voyageModel: VoyageModel,
+    })
+    const voyageApiKey = yield* Effect.promise(loadVoyageApiKey)
+    return { ...base, voyageApiKey }
   }),
 )
