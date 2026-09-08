@@ -6,7 +6,9 @@
   "exports": {
     ".": "./src/fusion.ts",
     "./hybrid": "./src/hybrid.ts",
-    "./voyage": "./src/voyage-embeddings.ts"
+    "./voyage": "./src/voyage-embeddings.ts",
+    "./embed-worker": "./src/embed-worker.ts",
+    "./content-hash": "./src/content-hash.ts"
   },
   "dependencies": {
     "@finch/core": "workspace:*",
