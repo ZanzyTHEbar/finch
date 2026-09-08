@@ -1,13 +1,11 @@
-import { migrate } from "drizzle-orm/bun-sqlite/migrator"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { Effect, Layer } from "effect"
-import { AppConfigLive, StorageUnavailable } from "@finch/core"
+import { AppConfigLive } from "@finch/core"
 import {
-  Db,
   LexicalIndexLive,
+  MigratedSqliteLive,
   ReceiptRepositoryLive,
   SearchDocumentRepositoryLive,
-  SqliteLive,
   TransactionRepositoryLive,
   VectorIndexLive,
 } from "@finch/db"
@@ -18,17 +16,7 @@ import { buildMcpServer } from "./server.ts"
 // Production composition for `bun packages/mcp/src/main.ts`: sqlite file
 // from DATABASE_URL (see AppConfig), file migrations applied on boot, live
 // voyage embeddings. Run from the repo root so the drizzle folder resolves.
-const MigratedDb = Layer.effect(
-  Db,
-  Effect.gen(function* () {
-    const { db, sqlite } = yield* Db
-    yield* Effect.try({
-      try: () => migrate(db, { migrationsFolder: "packages/db/drizzle" }),
-      catch: (cause) => new StorageUnavailable({ cause }),
-    })
-    return { db, sqlite }
-  }),
-).pipe(Layer.provide(SqliteLive), Layer.provide(AppConfigLive))
+const MigratedDb = Layer.provide(MigratedSqliteLive, AppConfigLive)
 
 const SearchDocs = Layer.provide(SearchDocumentRepositoryLive, MigratedDb)
 const Vectors = Layer.provide(VectorIndexLive, MigratedDb)
@@ -48,7 +36,7 @@ const main = Effect.gen(function* () {
   yield* Effect.never
 })
 
-Effect.runPromise(main as Effect.Effect<void>).catch((cause) => {
+Effect.runPromise(main).catch((cause) => {
   console.error(`finch-mcp: fatal: ${cause instanceof Error ? cause.message : String(cause)}`)
   process.exit(1)
 })

@@ -3,8 +3,9 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { ConfigError, Context, Effect, Layer } from "effect";
-import { AppConfigTag, type AppConfig } from "@finch/core";
+import { AppConfigTag, StorageUnavailable, type AppConfig } from "@finch/core";
 import * as schema from "./schema/index.ts";
 import { loadVecExtension } from "./vec-loader.ts";
 
@@ -62,3 +63,21 @@ export const SqliteLive: Layer.Layer<Db, ConfigError.ConfigError, AppConfig> = L
     return { db: drizzle(sqlite, { schema }), sqlite };
   }),
 );
+
+// Run from repo root so packages/db/drizzle resolves. Connect and MCP both
+// consume this; do not copy the migrate wrapper into adapters.
+export const MigratedSqliteLive: Layer.Layer<
+  Db,
+  ConfigError.ConfigError | StorageUnavailable,
+  AppConfig
+> = Layer.effect(
+  Db,
+  Effect.gen(function* () {
+    const { db, sqlite } = yield* Db;
+    yield* Effect.try({
+      try: () => migrate(db, { migrationsFolder: "packages/db/drizzle" }),
+      catch: (cause) => new StorageUnavailable({ cause }),
+    });
+    return { db, sqlite };
+  }),
+).pipe(Layer.provide(SqliteLive));

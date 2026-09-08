@@ -17,7 +17,6 @@
     "@finch/core": "workspace:*",
     "@finch/db": "workspace:*",
     "@finch/search": "workspace:*",
-    "drizzle-orm": "0.45.2",
     "effect": "3.22.1"
   },
   "devDependencies": {

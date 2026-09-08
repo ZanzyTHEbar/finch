@@ -2,12 +2,10 @@ import { create } from "@bufbuild/protobuf"
 import { Code, ConnectError, type ServiceImpl } from "@connectrpc/connect"
 import { Cause, ConfigError, Effect, Exit, Layer, ManagedRuntime, Schema } from "effect"
 import { AppConfigLive, EmbeddingProvider, StorageUnavailable, TenantId } from "@finch/core"
-import { migrate } from "drizzle-orm/bun-sqlite/migrator"
 import {
-  Db,
   LexicalIndexLive,
+  MigratedSqliteLive,
   SearchDocumentRepositoryLive,
-  SqliteLive,
   VectorIndexLive,
 } from "@finch/db"
 import { HybridSearch, HybridSearchLive } from "@finch/search/hybrid"
@@ -22,18 +20,7 @@ import {
 // DbLive is referenced — never rebuilt — by every branch below: Effect
 // memoizes layers by reference within a single build, so the SQLite
 // connection opens exactly once no matter how many branches consume it.
-const OpenedDb = Layer.provide(SqliteLive, AppConfigLive)
-const DbLive = Layer.effect(
-  Db,
-  Effect.gen(function* () {
-    const { db, sqlite } = yield* Db
-    yield* Effect.try({
-      try: () => migrate(db, { migrationsFolder: "packages/db/drizzle" }),
-      catch: (cause) => new StorageUnavailable({ cause }),
-    })
-    return { db, sqlite }
-  }),
-).pipe(Layer.provide(OpenedDb))
+const DbLive = Layer.provide(MigratedSqliteLive, AppConfigLive)
 const SearchDocumentRepositoryProvided = Layer.provide(SearchDocumentRepositoryLive, DbLive)
 const VectorIndexProvided = Layer.provide(VectorIndexLive, DbLive)
 const LexicalIndexProvided = Layer.provide(

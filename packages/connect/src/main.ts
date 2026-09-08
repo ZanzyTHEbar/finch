@@ -12,7 +12,12 @@ import { makeSearchService, SearchLayerLive } from "./search-service.ts"
 const embeddings = Layer.provide(VoyageEmbeddingProviderLive, AppConfigLive)
 const { impl, dispose } = makeSearchService(SearchLayerLive(embeddings))
 
-const port = Number(process.env["PORT"] ?? "8080")
+const rawPort = process.env["PORT"] ?? "8080"
+const port = Number(rawPort)
+if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  console.error(`finch-connect: invalid PORT ${JSON.stringify(rawPort)}`)
+  process.exit(1)
+}
 const server = createServer(
   connectNodeAdapter({
     routes: (router) => router.service(SearchService, impl),

@@ -1,6 +1,5 @@
 import { secrets } from "bun"
-import { Config, Context, Effect, Layer } from "effect"
-import type { ConfigError } from "effect"
+import { Config, ConfigError, Context, Effect, Layer } from "effect"
 
 export const DatabaseUrl = Config.string("DATABASE_URL").pipe(
   Config.withDefault("file:./data/finch.db"),
@@ -45,7 +44,11 @@ export const AppConfigLive: Layer.Layer<AppConfig, ConfigError.ConfigError> = La
       sqliteVecPath: SqliteVecPath,
       voyageModel: VoyageModel,
     })
-    const voyageApiKey = yield* Effect.promise(loadVoyageApiKey)
+    const voyageApiKey = yield* Effect.tryPromise({
+      try: loadVoyageApiKey,
+      catch: () =>
+        ConfigError.InvalidData(["VOYAGE_API_KEY"], "failed to read Voyage API key from keyring"),
+    })
     return { ...base, voyageApiKey }
   }),
 )
