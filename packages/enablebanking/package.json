@@ -2,5 +2,17 @@
   "name": "@finch/enablebanking",
   "version": "0.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./jwt": "./src/jwt.ts",
+    "./client": "./src/client.ts",
+    "./ingest": "./src/ingest.ts"
+  },
+  "dependencies": {
+    "@finch/core": "workspace:*",
+    "@finch/db": "workspace:*",
+    "effect": "3.22.1",
+    "jose": "6.2.12"
+  }
 }

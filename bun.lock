@@ -11,6 +11,7 @@
         "drizzle-orm": "0.45.2",
         "effect": "3.22.1",
         "fast-check": "^4.1.1",
+        "jose": "6.2.12",
         "typescript": "^5.9.3",
         "vitest": "^3.2.4",
       },
@@ -29,7 +30,6 @@
         "@finch/core": "workspace:*",
         "@finch/db": "workspace:*",
         "@finch/search": "workspace:*",
-        "drizzle-orm": "0.45.2",
         "effect": "3.22.1",
       },
       "devDependencies": {
@@ -57,6 +57,12 @@
     "packages/enablebanking": {
       "name": "@finch/enablebanking",
       "version": "0.1.0",
+      "dependencies": {
+        "@finch/core": "workspace:*",
+        "@finch/db": "workspace:*",
+        "effect": "3.22.1",
+        "jose": "6.2.12",
+      },
     },
     "packages/mcp": {
       "name": "@finch/mcp",
@@ -64,9 +70,9 @@
       "dependencies": {
         "@finch/core": "workspace:*",
         "@finch/db": "workspace:*",
+        "@finch/enablebanking": "workspace:*",
         "@finch/search": "workspace:*",
         "@modelcontextprotocol/sdk": "1.30.0",
-        "drizzle-orm": "0.45.2",
         "effect": "3.22.1",
       },
     },
