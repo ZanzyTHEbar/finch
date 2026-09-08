@@ -11,6 +11,10 @@ import {
   AccountRepositoryLive,
   type AccountRepository,
 } from "../packages/db/src/repositories/account.ts";
+import {
+  BankSessionRepositoryLive,
+  type BankSessionRepository,
+} from "../packages/db/src/repositories/bank-session.ts";
 import { EventReadRepositoryLive, type EventReadRepository } from "../packages/db/src/repositories/event.ts";
 import {
   ReceiptRepositoryLive,
@@ -40,12 +44,18 @@ import {
   EmbeddingRepositoryLive,
   type EmbeddingRepository,
 } from "../packages/db/src/repositories/embedding.ts";
+import {
+  BankAuthIntentRepositoryLive,
+  type BankAuthIntentRepository,
+} from "../packages/db/src/repositories/bank-auth-intent.ts";
 
 export type TestServices =
   | Db
   | EventStore
   | EventReadRepository
   | AccountRepository
+  | BankSessionRepository
+  | BankAuthIntentRepository
   | TransactionRepository
   | ReceiptRepository
   | SearchDocumentRepository
@@ -55,7 +65,7 @@ export type TestServices =
   | EmbeddingRepository
   | ProjectionRunner;
 
-export const makeTestLayers = (sqlite: Database): Layer.Layer<TestServices, never, never> => {
+export const makeTestLayers = (sqlite: Database) => {
   sqlite.exec("PRAGMA foreign_keys = ON;");
   // 0004 creates a vec0 virtual table: the extension must load before migrate.
   Effect.runSync(loadVecExtension(sqlite));
@@ -66,6 +76,8 @@ export const makeTestLayers = (sqlite: Database): Layer.Layer<TestServices, neve
     EventStoreLive,
     EventReadRepositoryLive,
     AccountRepositoryLive,
+    BankSessionRepositoryLive,
+    BankAuthIntentRepositoryLive,
     TransactionRepositoryLive,
     ReceiptRepositoryLive,
     SearchDocumentRepositoryLive,

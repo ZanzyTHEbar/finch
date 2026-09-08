@@ -41,6 +41,10 @@ export class AccountRepository extends Context.Tag("AccountRepository")<
       tenantId: TenantId,
       id: string,
     ) => Effect.Effect<AccountRow, AccountNotFound | StorageUnavailable>;
+    readonly findByExternalRef: (
+      tenantId: TenantId,
+      externalRef: string,
+    ) => Effect.Effect<AccountRow | null, StorageUnavailable>;
     readonly list: (tenantId: TenantId) => Effect.Effect<readonly AccountRow[], StorageUnavailable>;
   }
 >() {}
@@ -170,12 +174,29 @@ export const AccountRepositoryLive: Layer.Layer<AccountRepository, never, Db> = 
         return row;
       });
 
+    const findByExternalRef = (
+      tenantId: TenantId,
+      externalRef: string,
+    ): Effect.Effect<AccountRow | null, StorageUnavailable> =>
+      Effect.map(
+        Effect.try({
+          try: () =>
+            db
+              .select()
+              .from(accounts)
+              .where(and(eq(accounts.tenantId, tenantId), eq(accounts.externalRef, externalRef)))
+              .get(),
+          catch: (cause) => new StorageUnavailable({ cause }),
+        }),
+        (row) => row ?? null,
+      );
+
     const list = (tenantId: TenantId): Effect.Effect<readonly AccountRow[], StorageUnavailable> =>
       Effect.try({
         try: () => db.select().from(accounts).where(eq(accounts.tenantId, tenantId)).all(),
         catch: (cause) => new StorageUnavailable({ cause }),
       });
 
-    return { upsertFromDiscovery, applyUpdate, markRevoked, findById, list };
+    return { upsertFromDiscovery, applyUpdate, markRevoked, findById, findByExternalRef, list };
   }),
 );

@@ -4,6 +4,8 @@ export * from "./vec-loader.ts";
 export * from "./event-store.ts";
 export * from "./job-kinds.ts";
 export * from "./repositories/account.ts";
+export * from "./repositories/bank-session.ts";
+export * from "./repositories/bank-auth-intent.ts";
 export * from "./repositories/transaction.ts";
 export * from "./repositories/receipt.ts";
 export * from "./repositories/event.ts";

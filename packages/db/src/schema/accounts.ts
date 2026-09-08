@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { check, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { tenants } from "./tenants.ts";
 
 export const accounts = sqliteTable(
@@ -20,5 +20,8 @@ export const accounts = sqliteTable(
     check("accounts_type_valid", sql`${t.type} IN ('checking', 'savings', 'credit', 'investment', 'other')`),
     check("accounts_status_valid", sql`${t.status} IN ('active', 'revoked', 'closed')`),
     check("accounts_currency_len", sql`length(${t.currency}) = 3`),
+    uniqueIndex("accounts_tenant_external_ref")
+      .on(t.tenantId, t.externalRef)
+      .where(sql`${t.externalRef} IS NOT NULL`),
   ],
 );
