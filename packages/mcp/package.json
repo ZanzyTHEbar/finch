@@ -2,5 +2,16 @@
   "name": "@finch/mcp",
   "version": "0.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "exports": {
+    ".": "./src/server.ts"
+  },
+  "dependencies": {
+    "@finch/core": "workspace:*",
+    "@finch/db": "workspace:*",
+    "@finch/search": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "drizzle-orm": "0.45.2",
+    "effect": "3.22.1"
+  }
 }
