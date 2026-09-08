@@ -9,6 +9,7 @@
   "dependencies": {
     "@finch/core": "workspace:*",
     "@finch/db": "workspace:*",
+    "@finch/enablebanking": "workspace:*",
     "@finch/search": "workspace:*",
     "@modelcontextprotocol/sdk": "1.30.0",
     "effect": "3.22.1"

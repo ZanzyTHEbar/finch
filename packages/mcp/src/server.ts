@@ -7,22 +7,48 @@ import {
 } from "@modelcontextprotocol/sdk/types.js"
 import { Cause, Effect, Layer, Option, ParseResult, Schema } from "effect"
 import {
+  BankProvider,
+  BankSessionMissing,
+  IsoDate,
   NonEmptyTrimmedString,
   TenantId,
+  TenantMismatch,
   TransactionNotFound,
   ValidationFailed,
+  type ProviderUnavailable,
   type ReceiptNotFound,
   type StorageUnavailable,
 } from "@finch/core"
 import type { HybridSearchError } from "@finch/search/hybrid"
 import { HybridSearch } from "@finch/search/hybrid"
-import { ReceiptRepository, TransactionRepository } from "@finch/db"
+import {
+  BankAuthIntentRepository,
+  BankSessionRepository,
+  ReceiptRepository,
+  TransactionRepository,
+} from "@finch/db"
+import { BankIngest } from "@finch/enablebanking"
 
 // Services the tools run against. The server takes a composed layer of
 // these Tags — it never touches a driver, SQL, or connection string.
-export type FinchMcpEnv = HybridSearch | TransactionRepository | ReceiptRepository
+export type FinchMcpEnv =
+  | HybridSearch
+  | TransactionRepository
+  | ReceiptRepository
+  | BankProvider
+  | BankIngest
+  | BankSessionRepository
+  | BankAuthIntentRepository
 
-type ToolFailure = HybridSearchError | TransactionNotFound | ReceiptNotFound | StorageUnavailable
+type ToolFailure =
+  | HybridSearchError
+  | TransactionNotFound
+  | ReceiptNotFound
+  | StorageUnavailable
+  | ProviderUnavailable
+  | BankSessionMissing
+  | ValidationFailed
+  | TenantMismatch
 
 // Effect Schema is the tree's validation language (no zod in-repo): tool
 // inputs decode here, and every rejection surfaces as a typed
@@ -43,6 +69,29 @@ const EntityByIdInput = Schema.Struct({
 const ListUnmatchedReceiptsInput = Schema.Struct({
   tenantId: TenantId,
   limit: Schema.optional(PositiveInt),
+})
+
+const StartBankAuthInput = Schema.Struct({
+  tenantId: TenantId,
+  aspspName: Schema.NonEmptyString,
+  aspspCountry: Schema.NonEmptyString,
+  redirectUrl: Schema.NonEmptyString,
+  state: Schema.NonEmptyString,
+})
+
+const AuthorizeBankSessionInput = Schema.Struct({
+  tenantId: TenantId,
+  code: Schema.NonEmptyString,
+  state: Schema.NonEmptyString,
+})
+
+const SyncBankInput = Schema.Struct({
+  tenantId: TenantId,
+  since: Schema.optional(IsoDate),
+})
+
+const DeleteBankSessionInput = Schema.Struct({
+  tenantId: TenantId,
 })
 
 const decodeInput = <A, I>(schema: Schema.Schema<A, I>, args: unknown) =>
@@ -103,6 +152,57 @@ const TOOLS: Tool[] = [
       required: ["tenantId"],
     },
   },
+  {
+    name: "start_bank_auth",
+    description: "Start Enable Banking AIS authorization for an ASPSP (returns the bank redirect url).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenantId: { type: "string" },
+        aspspName: { type: "string" },
+        aspspCountry: { type: "string" },
+        redirectUrl: { type: "string" },
+        state: { type: "string" },
+      },
+      required: ["tenantId", "aspspName", "aspspCountry", "redirectUrl", "state"],
+    },
+  },
+  {
+    name: "authorize_bank_session",
+    description: "Exchange an AIS auth code for a session and store it for the tenant.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenantId: { type: "string" },
+        code: { type: "string" },
+        state: { type: "string" },
+      },
+      required: ["tenantId", "code", "state"],
+    },
+  },
+  {
+    name: "sync_bank",
+    description: "Ingest AIS accounts and transactions for the tenant's bank session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenantId: { type: "string" },
+        since: { type: "string" },
+      },
+      required: ["tenantId"],
+    },
+  },
+  {
+    name: "delete_bank_session",
+    description: "Delete the tenant's AIS session at Enable Banking and locally.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenantId: { type: "string" },
+      },
+      required: ["tenantId"],
+    },
+  },
 ]
 
 const searchFinances = (args: unknown): Effect.Effect<unknown, ToolFailure, FinchMcpEnv> =>
@@ -137,6 +237,63 @@ const listUnmatchedReceipts = (args: unknown): Effect.Effect<unknown, ToolFailur
     return yield* receipts.listUnmatched(input.tenantId, input.limit)
   })
 
+const startBankAuth = (args: unknown): Effect.Effect<unknown, ToolFailure, FinchMcpEnv> =>
+  Effect.gen(function* () {
+    const input = yield* decodeInput(StartBankAuthInput, args)
+    const intents = yield* BankAuthIntentRepository
+    const bank = yield* BankProvider
+    yield* intents.put(input.tenantId, input.state)
+    return yield* bank.startAuthorization({
+      aspsp: { name: input.aspspName, country: input.aspspCountry },
+      redirectUrl: input.redirectUrl,
+      state: input.state,
+    })
+  })
+
+const authorizeBankSession = (args: unknown): Effect.Effect<unknown, ToolFailure, FinchMcpEnv> =>
+  Effect.gen(function* () {
+    const input = yield* decodeInput(AuthorizeBankSessionInput, args)
+    const intents = yield* BankAuthIntentRepository
+    const intent = yield* intents.get(input.state)
+    if (intent === null) {
+      return yield* new ValidationFailed({ issues: ["unknown bank auth state"] })
+    }
+    if (intent.tenantId !== input.tenantId) {
+      return yield* new TenantMismatch()
+    }
+    const bank = yield* BankProvider
+    const sessions = yield* BankSessionRepository
+    const session = yield* bank.createSession(input.code)
+    const previous = yield* sessions.get(input.tenantId)
+    if (previous !== null && previous.sessionId !== session.sessionId) {
+      yield* bank.deleteSession(previous.sessionId)
+    }
+    yield* sessions.upsert(input.tenantId, session.sessionId)
+    yield* intents.remove(input.state)
+    return session
+  })
+
+const syncBank = (args: unknown): Effect.Effect<unknown, ToolFailure, FinchMcpEnv> =>
+  Effect.gen(function* () {
+    const input = yield* decodeInput(SyncBankInput, args)
+    const ingest = yield* BankIngest
+    return yield* ingest.sync(input.tenantId, input.since)
+  })
+
+const deleteBankSession = (args: unknown): Effect.Effect<unknown, ToolFailure, FinchMcpEnv> =>
+  Effect.gen(function* () {
+    const input = yield* decodeInput(DeleteBankSessionInput, args)
+    const sessions = yield* BankSessionRepository
+    const bank = yield* BankProvider
+    const row = yield* sessions.get(input.tenantId)
+    if (row === null) {
+      return yield* new BankSessionMissing({ tenantId: input.tenantId })
+    }
+    yield* bank.deleteSession(row.sessionId)
+    yield* sessions.remove(input.tenantId)
+    return { deleted: true }
+  })
+
 const toolEffect = (name: string, args: unknown): Effect.Effect<unknown, ToolFailure, FinchMcpEnv> => {
   switch (name) {
     case "search_finances":
@@ -147,6 +304,14 @@ const toolEffect = (name: string, args: unknown): Effect.Effect<unknown, ToolFai
       return getReceipt(args)
     case "list_unmatched_receipts":
       return listUnmatchedReceipts(args)
+    case "start_bank_auth":
+      return startBankAuth(args)
+    case "authorize_bank_session":
+      return authorizeBankSession(args)
+    case "sync_bank":
+      return syncBank(args)
+    case "delete_bank_session":
+      return deleteBankSession(args)
     default:
       return Effect.fail(new ValidationFailed({ issues: [`unknown tool: ${name}`] }))
   }
@@ -168,7 +333,13 @@ const safeJson = (value: unknown): unknown => {
 
 // Typed failures: every domain error already carries _tag, so report it
 // plus its fields (404s stay distinguishable, never a bare string).
-const SAFE_ERROR_FIELDS = ["issues", "transactionId", "receiptId", "tenantId", "documentId"] as const
+const SAFE_ERROR_FIELDS = [
+  "issues",
+  "transactionId",
+  "receiptId",
+  "tenantId",
+  "documentId",
+] as const
 
 const errorPayload = (failure: unknown): Record<string, unknown> => {
   if (typeof failure === "object" && failure !== null && "_tag" in failure) {

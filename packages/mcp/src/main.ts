@@ -2,15 +2,24 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { Effect, Layer } from "effect"
 import { AppConfigLive } from "@finch/core"
 import {
+  AccountRepositoryLive,
+  BankAuthIntentRepositoryLive,
+  BankSessionRepositoryLive,
   EmbeddingRepositoryLive,
+  EventReadRepositoryLive,
+  EventStoreLive,
   JobRepositoryLive,
   LexicalIndexLive,
   MigratedSqliteLive,
+  ProjectionRunnerLive,
   ReceiptRepositoryLive,
+  ReconciliationRepositoryLive,
   SearchDocumentRepositoryLive,
+  SummaryRepositoryLive,
   TransactionRepositoryLive,
   VectorIndexLive,
 } from "@finch/db"
+import { BankIngestLive, EnableBankingLive } from "@finch/enablebanking"
 import { DocumentEmbedWorker, DocumentEmbedWorkerLive } from "@finch/search/embed-worker"
 import { HybridSearchLive } from "@finch/search/hybrid"
 import { VoyageEmbeddingProviderLive } from "@finch/search/voyage"
@@ -34,8 +43,35 @@ const Worker = Layer.provide(
   DocumentEmbedWorkerLive,
   Layer.mergeAll(AppConfigLive, Embeddings, Vectors, Jobs, SearchDocs, Stored),
 )
+const Accounts = Layer.provide(AccountRepositoryLive, MigratedDb)
+const Events = Layer.provide(EventStoreLive, MigratedDb)
+const EventReads = Layer.provide(EventReadRepositoryLive, MigratedDb)
+const Summaries = Layer.provide(SummaryRepositoryLive, MigratedDb)
+const Recons = Layer.provide(ReconciliationRepositoryLive, MigratedDb)
+const Sessions = Layer.provide(BankSessionRepositoryLive, MigratedDb)
+const Intents = Layer.provide(BankAuthIntentRepositoryLive, MigratedDb)
+const Bank = Layer.provide(EnableBankingLive, AppConfigLive)
+const Runner = Layer.provide(
+  ProjectionRunnerLive,
+  Layer.mergeAll(
+    MigratedDb,
+    Events,
+    EventReads,
+    Accounts,
+    Transactions,
+    Receipts,
+    SearchDocs,
+    Summaries,
+    Recons,
+    Jobs,
+  ),
+)
+const Ingest = Layer.provide(BankIngestLive, Layer.mergeAll(Bank, Sessions, Accounts, Events, Runner))
 
-const FinchMcpLive = Layer.mergeAll(Hybrid, Transactions, Receipts).pipe(Layer.orDie)
+const FinchMcpLive = Layer.mergeAll(
+  Layer.mergeAll(Hybrid, Transactions, Receipts, Bank),
+  Layer.mergeAll(Sessions, Intents, Ingest),
+).pipe(Layer.orDie)
 const BootLive = Layer.mergeAll(FinchMcpLive, Worker).pipe(Layer.orDie)
 
 const main = Effect.gen(function* () {

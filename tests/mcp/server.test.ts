@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto"
 import { Database } from "bun:sqlite"
 import { Effect, Layer, Schema } from "effect"
 import { describe, expect, it } from "vitest"
@@ -5,6 +6,7 @@ import { TenantId } from "../../packages/core/src/domain/tenant.ts"
 import type { TenantId as TenantIdT } from "../../packages/core/src/domain/tenant.ts"
 import { nowInstant } from "../../packages/core/src/domain/time.ts"
 import { EmbeddingProvider } from "../../packages/core/src/ports/embedding-provider.ts"
+import { BankProvider } from "../../packages/core/src/ports/bank-provider.ts"
 import { VectorIndex } from "../../packages/core/src/ports/vector-index.ts"
 import { Db } from "../../packages/db/src/client.ts"
 import { LexicalIndexLive } from "../../packages/db/src/lexical/lexical-index.ts"
@@ -12,11 +14,21 @@ import { AccountRepository } from "../../packages/db/src/repositories/account.ts
 import { ReceiptRepository } from "../../packages/db/src/repositories/receipt.ts"
 import { SearchDocumentRepository } from "../../packages/db/src/repositories/search-document.ts"
 import { TransactionRepository } from "../../packages/db/src/repositories/transaction.ts"
+import { makeEnableBankingService } from "../../packages/enablebanking/src/client.ts"
+import { BankIngestLive } from "../../packages/enablebanking/src/ingest.ts"
 import { tenants } from "../../packages/db/src/schema/index.ts"
 import { VectorIndexLive } from "../../packages/db/src/vector-index.ts"
 import { HybridSearchLive } from "../../packages/search/src/hybrid.ts"
 import { connectInProcess } from "../../packages/mcp/src/testing.ts"
 import { makeTestLayers, runTest } from "../setup.ts"
+
+const TEST_PEM = (() => {
+  const exported = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({
+    type: "pkcs8",
+    format: "pem",
+  })
+  return typeof exported === "string" ? exported : exported.toString()
+})()
 
 // In-process MCP tool calls (real Client + Server over a linked transport)
 // against the memory stack with canned embeddings: no network, no API keys.
@@ -55,7 +67,18 @@ const makeLayers = (sqlite: Database) => {
     Layer.provide(LexicalIndexLive, base),
   )
   const hybrid = Layer.provide(HybridSearchLive, Layer.mergeAll(base, indexes, cannedEmbeddings))
-  return Layer.mergeAll(base, indexes, cannedEmbeddings, hybrid)
+  const bank = Layer.succeed(
+    BankProvider,
+    makeEnableBankingService({
+      baseUrl: "http://127.0.0.1:1",
+      applicationId: "app-mcp-test",
+      privateKeyPem: TEST_PEM,
+      psuIp: "203.0.113.10",
+      psuUserAgent: "finch-test",
+    }),
+  )
+  const ingest = Layer.provide(BankIngestLive, Layer.mergeAll(base, bank))
+  return Layer.mergeAll(base, indexes, cannedEmbeddings, hybrid, bank, ingest)
 }
 
 const seedLedger = (tid: TenantIdT) =>
@@ -138,16 +161,21 @@ describe("finch MCP server", () => {
       try {
         const tools = await mcp.listTools()
         expect(tools.tools.map((t) => t.name).sort()).toStrictEqual([
+          "authorize_bank_session",
+          "delete_bank_session",
           "get_receipt",
           "get_transaction",
           "list_unmatched_receipts",
           "search_finances",
+          "start_bank_auth",
+          "sync_bank",
         ])
       } finally {
         await mcp.close()
       }
     })
   })
+
 
   it("search_finances returns the golden doc top-1 with ranks and sources", async () => {
     await withStack(async (layer) => {
