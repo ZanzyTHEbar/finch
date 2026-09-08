@@ -3,11 +3,14 @@ import { Code, ConnectError, type ServiceImpl } from "@connectrpc/connect"
 import { Cause, ConfigError, Effect, Exit, Layer, ManagedRuntime, Schema } from "effect"
 import { AppConfigLive, EmbeddingProvider, StorageUnavailable, TenantId } from "@finch/core"
 import {
+  EmbeddingRepositoryLive,
+  JobRepositoryLive,
   LexicalIndexLive,
   MigratedSqliteLive,
   SearchDocumentRepositoryLive,
   VectorIndexLive,
 } from "@finch/db"
+import { DocumentEmbedWorker, DocumentEmbedWorkerLive, type DrainStats } from "@finch/search/embed-worker"
 import { HybridSearch, HybridSearchLive } from "@finch/search/hybrid"
 import {
   SearchResponseSchema,
@@ -23,6 +26,8 @@ import {
 const DbLive = Layer.provide(MigratedSqliteLive, AppConfigLive)
 const SearchDocumentRepositoryProvided = Layer.provide(SearchDocumentRepositoryLive, DbLive)
 const VectorIndexProvided = Layer.provide(VectorIndexLive, DbLive)
+const JobRepositoryProvided = Layer.provide(JobRepositoryLive, DbLive)
+const EmbeddingRepositoryProvided = Layer.provide(EmbeddingRepositoryLive, DbLive)
 const LexicalIndexProvided = Layer.provide(
   LexicalIndexLive,
   Layer.mergeAll(DbLive, SearchDocumentRepositoryProvided),
@@ -51,6 +56,21 @@ export const SearchLayerLive = <E>(
     ),
   )
 
+export const EmbedWorkerLayerLive = <E>(
+  embeddings: Layer.Layer<EmbeddingProvider, E>,
+): Layer.Layer<DocumentEmbedWorker, E | ConfigError.ConfigError | StorageUnavailable> =>
+  Layer.provide(
+    DocumentEmbedWorkerLive,
+    Layer.mergeAll(
+      AppConfigLive,
+      embeddings,
+      VectorIndexProvided,
+      JobRepositoryProvided,
+      SearchDocumentRepositoryProvided,
+      EmbeddingRepositoryProvided,
+    ),
+  )
+
 const toConnectError = (cause: unknown): ConnectError => {
   if (cause instanceof ConnectError) {
     return cause
@@ -74,7 +94,9 @@ const toConnectError = (cause: unknown): ConnectError => {
   return new ConnectError("search failed", Code.Internal)
 }
 
-const searchEffect = (request: SearchRequest): Effect.Effect<SearchResponse, ConnectError, HybridSearch> =>
+const searchEffect = (
+  request: SearchRequest,
+): Effect.Effect<SearchResponse, ConnectError, HybridSearch | DocumentEmbedWorker> =>
   Effect.gen(function* () {
     const tenantId = yield* Schema.decodeUnknown(TenantId)(request.tenantId).pipe(
       Effect.mapError(
@@ -108,14 +130,15 @@ const searchEffect = (request: SearchRequest): Effect.Effect<SearchResponse, Con
 export interface SearchServiceHandle {
   readonly impl: ServiceImpl<typeof SearchService>
   readonly dispose: () => Promise<void>
+  readonly drainEmbeds: () => Promise<DrainStats>
 }
 
 /** Bind the Search RPC to a HybridSearch stack. Stack build failures
  * (e.g. bad DATABASE_URL) surface as rejected RPCs via toConnectError. */
 export const makeSearchService = <E>(
-  hybridLayer: Layer.Layer<HybridSearch, E>,
+  layer: Layer.Layer<HybridSearch | DocumentEmbedWorker, E>,
 ): SearchServiceHandle => {
-  const runtime = ManagedRuntime.make(hybridLayer)
+  const runtime = ManagedRuntime.make(layer)
   return {
     impl: {
       search: (request) =>
@@ -127,6 +150,14 @@ export const makeSearchService = <E>(
         }),
     },
     dispose: () => runtime.dispose(),
+    drainEmbeds: () =>
+      runtime.runPromise(
+        Effect.gen(function* () {
+          const worker = yield* DocumentEmbedWorker
+          yield* worker.requeueAllMissing()
+          return yield* worker.drain(500)
+        }).pipe(Effect.mapError(toConnectError)),
+      ),
   }
 }
 

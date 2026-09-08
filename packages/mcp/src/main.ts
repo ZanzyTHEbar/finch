@@ -2,6 +2,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { Effect, Layer } from "effect"
 import { AppConfigLive } from "@finch/core"
 import {
+  EmbeddingRepositoryLive,
+  JobRepositoryLive,
   LexicalIndexLive,
   MigratedSqliteLive,
   ReceiptRepositoryLive,
@@ -9,6 +11,7 @@ import {
   TransactionRepositoryLive,
   VectorIndexLive,
 } from "@finch/db"
+import { DocumentEmbedWorker, DocumentEmbedWorkerLive } from "@finch/search/embed-worker"
 import { HybridSearchLive } from "@finch/search/hybrid"
 import { VoyageEmbeddingProviderLive } from "@finch/search/voyage"
 import { buildMcpServer } from "./server.ts"
@@ -25,16 +28,26 @@ const Embeddings = Layer.provide(VoyageEmbeddingProviderLive, AppConfigLive)
 const Hybrid = Layer.provide(HybridSearchLive, Layer.mergeAll(Embeddings, Vectors, Lexical, SearchDocs))
 const Transactions = Layer.provide(TransactionRepositoryLive, MigratedDb)
 const Receipts = Layer.provide(ReceiptRepositoryLive, MigratedDb)
+const Jobs = Layer.provide(JobRepositoryLive, MigratedDb)
+const Stored = Layer.provide(EmbeddingRepositoryLive, MigratedDb)
+const Worker = Layer.provide(
+  DocumentEmbedWorkerLive,
+  Layer.mergeAll(AppConfigLive, Embeddings, Vectors, Jobs, SearchDocs, Stored),
+)
 
 const FinchMcpLive = Layer.mergeAll(Hybrid, Transactions, Receipts).pipe(Layer.orDie)
+const BootLive = Layer.mergeAll(FinchMcpLive, Worker).pipe(Layer.orDie)
 
 const main = Effect.gen(function* () {
+  const worker = yield* DocumentEmbedWorker
+  yield* worker.requeueAllMissing()
+  yield* worker.drain(500)
   const server = buildMcpServer(FinchMcpLive)
   yield* Effect.promise(() => server.connect(new StdioServerTransport()))
   // connect() resolves once the transport is up; hold the session on stdin.
   // Never write to stdout — MCP JSON-RPC owns it.
   yield* Effect.never
-})
+}).pipe(Effect.provide(BootLive))
 
 Effect.runPromise(main).catch((cause) => {
   console.error(`finch-mcp: fatal: ${cause instanceof Error ? cause.message : String(cause)}`)

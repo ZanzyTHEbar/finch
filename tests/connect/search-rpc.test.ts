@@ -5,11 +5,13 @@ import { Code, ConnectError, createClient, type ServiceImpl } from "@connectrpc/
 import { connectNodeAdapter, createConnectTransport } from "@connectrpc/connect-node"
 import { Effect, Layer, Schema } from "effect"
 import { describe, expect, it } from "vitest"
+import { AppConfigTag } from "../../packages/core/src/config/config.ts"
 import { TenantId } from "../../packages/core/src/domain/tenant.ts"
 import type { TenantId as TenantIdT } from "../../packages/core/src/domain/tenant.ts"
 import { nowInstant } from "../../packages/core/src/domain/time.ts"
 import { EmbeddingProvider } from "../../packages/core/src/ports/embedding-provider.ts"
 import { VectorIndex } from "../../packages/core/src/ports/vector-index.ts"
+import { DocumentEmbedWorkerLive } from "../../packages/search/src/embed-worker.ts"
 import { HybridSearchLive } from "../../packages/search/src/hybrid.ts"
 import { Db } from "../../packages/db/src/client.ts"
 import { VectorIndexLive } from "../../packages/db/src/vector-index.ts"
@@ -42,6 +44,36 @@ const queryVector = (): Float32Array => {
 }
 
 const encode = (v: Float32Array): Uint8Array => new Uint8Array(v.buffer)
+
+const cannedEmbeddings = Layer.succeed(
+  EmbeddingProvider,
+  EmbeddingProvider.of({
+    embedDocuments: (texts) =>
+      Effect.succeed(texts.map(() => ({ model: MODEL, dims: DIMS, vector: queryVector() }))),
+    embedQuery: () => Effect.succeed({ model: MODEL, dims: DIMS, vector: queryVector() }),
+  }),
+)
+
+const testConfig = Layer.succeed(AppConfigTag, {
+  databaseUrl: "file::memory:",
+  sqliteVecPath: "",
+  voyageApiKey: "",
+  voyageModel: MODEL,
+})
+
+const rpcLayer = (sqlite: Database) => {
+  const base = makeTestLayers(sqlite)
+  const indexes = Layer.mergeAll(
+    Layer.provide(VectorIndexLive, base),
+    Layer.provide(LexicalIndexLive, base),
+  )
+  const hybrid = Layer.provide(HybridSearchLive, Layer.mergeAll(base, indexes, cannedEmbeddings))
+  const worker = Layer.provide(
+    DocumentEmbedWorkerLive,
+    Layer.mergeAll(base, indexes, cannedEmbeddings, testConfig),
+  )
+  return { base, indexes, layer: Layer.mergeAll(hybrid, worker) }
+}
 
 const seedCorpus = (tid: TenantIdT) =>
   Effect.gen(function* () {
@@ -88,25 +120,9 @@ describe("SearchService RPC", () => {
   it("returns the golden doc over a client/server round-trip", async () => {
     const sqlite = new Database(":memory:")
     try {
-      const base = makeTestLayers(sqlite)
-      const cannedEmbeddings = Layer.succeed(
-        EmbeddingProvider,
-        EmbeddingProvider.of({
-          embedDocuments: (texts) =>
-            Effect.succeed(texts.map(() => ({ model: MODEL, dims: DIMS, vector: queryVector() }))),
-          embedQuery: () => Effect.succeed({ model: MODEL, dims: DIMS, vector: queryVector() }),
-        }),
-      )
-      const indexes = Layer.mergeAll(
-        Layer.provide(VectorIndexLive, base),
-        Layer.provide(LexicalIndexLive, base),
-      )
+      const { base, indexes, layer } = rpcLayer(sqlite)
       await runTest(Layer.mergeAll(base, indexes), seedCorpus(TIDA))
-      const hybridLayer = Layer.provide(
-        HybridSearchLive,
-        Layer.mergeAll(base, indexes, cannedEmbeddings),
-      )
-      const { impl, dispose } = makeSearchService(hybridLayer)
+      const { impl, dispose } = makeSearchService(layer)
       try {
         const { baseUrl, close } = await serve(impl)
         try {
@@ -149,24 +165,8 @@ describe("SearchService RPC", () => {
   it("maps empty text to InvalidArgument over the wire", async () => {
     const sqlite = new Database(":memory:")
     try {
-      const base = makeTestLayers(sqlite)
-      const cannedEmbeddings = Layer.succeed(
-        EmbeddingProvider,
-        EmbeddingProvider.of({
-          embedDocuments: (texts) =>
-            Effect.succeed(texts.map(() => ({ model: MODEL, dims: DIMS, vector: queryVector() }))),
-          embedQuery: () => Effect.succeed({ model: MODEL, dims: DIMS, vector: queryVector() }),
-        }),
-      )
-      const indexes = Layer.mergeAll(
-        Layer.provide(VectorIndexLive, base),
-        Layer.provide(LexicalIndexLive, base),
-      )
-      const hybridLayer = Layer.provide(
-        HybridSearchLive,
-        Layer.mergeAll(base, indexes, cannedEmbeddings),
-      )
-      const { impl, dispose } = makeSearchService(hybridLayer)
+      const { layer } = rpcLayer(sqlite)
+      const { impl, dispose } = makeSearchService(layer)
       try {
         const { baseUrl, close } = await serve(impl)
         try {
