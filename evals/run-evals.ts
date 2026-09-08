@@ -14,6 +14,7 @@ import { reciprocalRankFusion } from "../packages/search/src/fusion.ts";
 import { parseDocumentId } from "../packages/search/src/document-id.ts";
 import { evaluateRun } from "../packages/search/src/eval-metrics.ts";
 import { makeTestLayers, runTest } from "../tests/setup.ts";
+import { EVAL_CORPUS, EVAL_DIMS, EVAL_MODEL, EVAL_TENANT } from "./corpus.ts";
 
 // Component-level harness: seeds a small separable corpus, runs the dense
 // (canned basis vectors, standing in for Voyage) and lexical (real FTS5)
@@ -23,71 +24,14 @@ import { makeTestLayers, runTest } from "../tests/setup.ts";
 //
 // Honest scope: the fixture is separable by construction (unique tokens per
 // doc), so macro recall@10 == 1.0 here is a regression smoke gate, not a
-// quality claim. The 0.95 recall@10 target applies to the later golden set
-// with real voyage-finance-2 embeddings.
+// quality claim. Live Voyage (`bun evals/run-evals-live.ts`) gates the same
+// recall@10 == 1.0; recall@1 is reported, not gated.
 
-const DIMS = 1024;
-const MODEL = "voyage-finance-2";
-const TENANT = "t-eval";
+const DIMS = EVAL_DIMS;
+const MODEL = EVAL_MODEL;
+const TENANT = EVAL_TENANT;
 const TOP_K = 20;
-
-interface FixtureDoc {
-  readonly documentId: string;
-  readonly content: string;
-}
-
-// Separable fixture: exact tokens are unique per doc, "groceries" hits only
-// the 3 grocery docs (first tripled so BM25 + dense agree on top-1),
-// "utilities monthly" hits only the 2 utility docs (first tripled), and the
-// semantic queries use paraphrases absent from every doc so the lexical
-// channel returns [] and the canned dense vector carries the top-1.
-const CORPUS: readonly FixtureDoc[] = [
-  {
-    documentId: "transaction:tx-continente-weekly",
-    content: "Continente groceries groceries groceries EUR 42.80 weekly shop debit card receipt",
-  },
-  {
-    documentId: "transaction:tx-pingo-fresh",
-    content: "Pingo Doce groceries EUR 31.15 fresh produce debit receipt",
-  },
-  {
-    documentId: "transaction:tx-aucham-bulk",
-    content: "Auchan bulk groceries EUR 88.40 household essentials credit receipt",
-  },
-  { documentId: "transaction:tx-bp-fuel", content: "BP fuel station petrol EUR 60.00 diesel receipt" },
-  {
-    documentId: "transaction:tx-galp-charge",
-    content: "Galp electric charging EUR 18.75 EV station receipt",
-  },
-  {
-    documentId: "transaction:tx-cp-rail",
-    content: "CP train Lisboa Porto EUR 24.50 railway ticket transport",
-  },
-  {
-    documentId: "transaction:tx-uber-airport",
-    content: "Uber ride Lisboa airport EUR 14.20 transport receipt",
-  },
-  {
-    documentId: "receipt:rc-starbucks-lisboa",
-    content: "Starbucks Lisboa coffee EUR 4.80 cafe latte receipt",
-  },
-  {
-    documentId: "receipt:rc-mcdonalds",
-    content: "McDonalds burger fries EUR 9.90 fast food restaurant receipt",
-  },
-  {
-    documentId: "transaction:tx-farmacia-health",
-    content: "Farmacia Central pharmacy EUR 12.30 medicine health receipt",
-  },
-  {
-    documentId: "receipt:rc-nos-telecom",
-    content: "NOS telecom internet bill EUR 35.99 monthly subscription utilities utilities utilities",
-  },
-  {
-    documentId: "receipt:rc-edp-energy",
-    content: "EDP electricity bill EUR 62.10 energy utilities monthly receipt",
-  },
-];
+const CORPUS = EVAL_CORPUS;
 
 interface EvalCase {
   readonly id: string;
