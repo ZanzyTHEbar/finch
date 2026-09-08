@@ -2,6 +2,7 @@ import { secrets } from "bun"
 import { describe, expect, it } from "vitest"
 import {
   FINCH_SECRET_SERVICE,
+  loadEnableBankingPrivateKey,
   loadVoyageApiKey,
   VOYAGE_API_KEY_SECRET_NAME,
 } from "../../packages/core/src/config/config.ts"
@@ -32,6 +33,20 @@ describe("Bun.secrets voyage key", () => {
         delete process.env["VOYAGE_API_KEY"]
       } else {
         process.env["VOYAGE_API_KEY"] = prev
+      }
+    }
+  })
+
+  it("lets ENABLEBANKING_PRIVATE_KEY env override the keyring", async () => {
+    const prev = process.env["ENABLEBANKING_PRIVATE_KEY"]
+    process.env["ENABLEBANKING_PRIVATE_KEY"] = "env-override-pem"
+    try {
+      expect(await loadEnableBankingPrivateKey()).toBe("env-override-pem")
+    } finally {
+      if (prev === undefined) {
+        delete process.env["ENABLEBANKING_PRIVATE_KEY"]
+      } else {
+        process.env["ENABLEBANKING_PRIVATE_KEY"] = prev
       }
     }
   })

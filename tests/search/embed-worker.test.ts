@@ -86,6 +86,11 @@ const workerLayers = (sqlite: Database, embedder: Layer.Layer<EmbeddingProvider>
     sqliteVecPath: "",
     voyageApiKey: "",
     voyageModel: "voyage-finance-2",
+    enableBankingBaseUrl: "https://api.enablebanking.com",
+    enableBankingApplicationId: "",
+    enableBankingPrivateKey: "",
+    enableBankingPsuIp: "203.0.113.10",
+    enableBankingPsuUserAgent: "finch-test",
   })
   const worker = Layer.provide(
     DocumentEmbedWorkerLive,

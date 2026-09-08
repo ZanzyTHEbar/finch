@@ -59,6 +59,11 @@ const testConfig = Layer.succeed(AppConfigTag, {
   sqliteVecPath: "",
   voyageApiKey: "",
   voyageModel: MODEL,
+  enableBankingBaseUrl: "https://api.enablebanking.com",
+  enableBankingApplicationId: "",
+  enableBankingPrivateKey: "",
+  enableBankingPsuIp: "203.0.113.10",
+  enableBankingPsuUserAgent: "finch-test",
 })
 
 const rpcLayer = (sqlite: Database) => {
