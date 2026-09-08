@@ -1,0 +1,9 @@
+# Local codegen: `protoc-gen-es` resolves via PATH, which bun populates
+# with workspace .bin entries when run as `bun run generate`.
+# Output matches protobuf-es v2 (see @bufbuild/protobuf).
+version: v2
+plugins:
+  - local: protoc-gen-es
+    out: src/gen
+    opt:
+      - target=ts

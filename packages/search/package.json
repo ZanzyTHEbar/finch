@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/fusion.ts",
-    "./hybrid": "./src/hybrid.ts"
+    "./hybrid": "./src/hybrid.ts",
+    "./voyage": "./src/voyage-embeddings.ts"
   },
   "dependencies": {
     "@finch/core": "workspace:*",

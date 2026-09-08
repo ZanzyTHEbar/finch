@@ -2,5 +2,25 @@
   "name": "@finch/connect",
   "version": "0.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./search-service": "./src/search-service.ts"
+  },
+  "scripts": {
+    "generate": "buf generate"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.14.1",
+    "@connectrpc/connect": "2.1.2",
+    "@connectrpc/connect-node": "2.1.2",
+    "@finch/core": "workspace:*",
+    "@finch/db": "workspace:*",
+    "@finch/search": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "effect": "3.22.1"
+  },
+  "devDependencies": {
+    "@bufbuild/protoc-gen-es": "2.14.1"
+  }
 }
