@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `jobs_queued_kind_payload` ON `jobs` (`tenant_id`,`kind`,`payload`) WHERE "jobs"."status" = 'queued';

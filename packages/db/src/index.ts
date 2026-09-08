@@ -2,6 +2,7 @@ export * from "./schema/index.ts";
 export * from "./client.ts";
 export * from "./vec-loader.ts";
 export * from "./event-store.ts";
+export * from "./job-kinds.ts";
 export * from "./repositories/account.ts";
 export * from "./repositories/transaction.ts";
 export * from "./repositories/receipt.ts";

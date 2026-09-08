@@ -36,6 +36,20 @@
       "when": 1788701465540,
       "tag": "0004_vec-document-embeddings",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1788883509967,
+      "tag": "0005_hard_talon",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788883950018,
+      "tag": "0006_tricky_black_tarantula",
+      "breakpoints": true
     }
   ]
 }

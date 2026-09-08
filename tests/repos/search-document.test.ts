@@ -44,4 +44,25 @@ describe("SearchDocumentRepository.findBySource", () => {
       sqlite.close();
     }
   });
+
+  it("lists distinct tenant ids that own documents", async () => {
+    const sqlite = new Database(":memory:");
+    try {
+      const ids = await runTest(
+        makeTestLayers(sqlite),
+        Effect.gen(function* () {
+          yield* seedTenant(TIDA);
+          yield* seedTenant(TIDB);
+          const docs = yield* SearchDocumentRepository;
+          yield* docs.upsert(TIDA, "transaction", "tx-1", "groceries");
+          yield* docs.upsert(TIDA, "receipt", "rc-1", "receipt");
+          yield* docs.upsert(TIDB, "transaction", "tx-2", "fuel");
+          return yield* docs.listDistinctTenantIds();
+        }),
+      );
+      expect(ids.slice().sort()).toEqual([TIDA, TIDB].slice().sort());
+    } finally {
+      sqlite.close();
+    }
+  });
 });

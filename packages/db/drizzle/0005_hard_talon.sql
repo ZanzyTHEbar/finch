@@ -1,0 +1,1 @@
+ALTER TABLE `embeddings` ADD `content_hash` text NOT NULL;

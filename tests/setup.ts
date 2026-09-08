@@ -32,6 +32,14 @@ import {
   TransactionRepositoryLive,
   type TransactionRepository,
 } from "../packages/db/src/repositories/transaction.ts";
+import {
+  JobRepositoryLive,
+  type JobRepository,
+} from "../packages/db/src/repositories/job.ts";
+import {
+  EmbeddingRepositoryLive,
+  type EmbeddingRepository,
+} from "../packages/db/src/repositories/embedding.ts";
 
 export type TestServices =
   | Db
@@ -43,6 +51,8 @@ export type TestServices =
   | SearchDocumentRepository
   | SummaryRepository
   | ReconciliationRepository
+  | JobRepository
+  | EmbeddingRepository
   | ProjectionRunner;
 
 export const makeTestLayers = (sqlite: Database): Layer.Layer<TestServices, never, never> => {
@@ -61,6 +71,8 @@ export const makeTestLayers = (sqlite: Database): Layer.Layer<TestServices, neve
     SearchDocumentRepositoryLive,
     SummaryRepositoryLive,
     ReconciliationRepositoryLive,
+    JobRepositoryLive,
+    EmbeddingRepositoryLive,
   );
   const ReposProvided = Layer.provide(ReposLive, DbLive);
   const RunnerProvided = Layer.provide(

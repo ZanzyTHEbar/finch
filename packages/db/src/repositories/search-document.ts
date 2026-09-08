@@ -29,6 +29,7 @@ export class SearchDocumentRepository extends Context.Tag("SearchDocumentReposit
       sourceId: string,
     ) => Effect.Effect<SearchDocumentRow | null, StorageUnavailable>;
     readonly count: (tenantId: TenantId) => Effect.Effect<number, StorageUnavailable>;
+    readonly listDistinctTenantIds: () => Effect.Effect<readonly TenantId[], StorageUnavailable>;
   }
 >() {}
 
@@ -144,6 +145,26 @@ export const SearchDocumentRepositoryLive: Layer.Layer<SearchDocumentRepository,
           return row?.value ?? 0;
         });
 
-      return { upsert, removeBySource, listAll, findBySource, count: countDocuments };
+      const listDistinctTenantIds = (): Effect.Effect<readonly TenantId[], StorageUnavailable> =>
+        Effect.try({
+          try: () => {
+            const rows = db
+              .select({ tenantId: searchDocuments.tenantId })
+              .from(searchDocuments)
+              .groupBy(searchDocuments.tenantId)
+              .all();
+            return rows.map((row) => row.tenantId as TenantId);
+          },
+          catch: (cause) => new StorageUnavailable({ cause }),
+        });
+
+      return {
+        upsert,
+        removeBySource,
+        listAll,
+        findBySource,
+        count: countDocuments,
+        listDistinctTenantIds,
+      };
     }),
   );

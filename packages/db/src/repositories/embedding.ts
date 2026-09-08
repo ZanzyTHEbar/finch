@@ -15,12 +15,13 @@ export class EmbeddingRepository extends Context.Tag("EmbeddingRepository")<
       model: string,
       dims: number,
       vector: Uint8Array,
+      contentHash: string,
     ) => Effect.Effect<EmbeddingRow, StorageUnavailable>;
     readonly get: (
       tenantId: TenantId,
       documentId: string,
       model: string,
-    ) => Effect.Effect<Uint8Array | null, StorageUnavailable>;
+    ) => Effect.Effect<EmbeddingRow | null, StorageUnavailable>;
     readonly removeByDocument: (
       tenantId: TenantId,
       documentId: string,
@@ -39,6 +40,7 @@ export const EmbeddingRepositoryLive: Layer.Layer<EmbeddingRepository, never, Db
       model: string,
       dims: number,
       vector: Uint8Array,
+      contentHash: string,
     ): Effect.Effect<EmbeddingRow, StorageUnavailable> =>
       Effect.gen(function* () {
         const row = yield* Effect.try({
@@ -52,10 +54,11 @@ export const EmbeddingRepositoryLive: Layer.Layer<EmbeddingRepository, never, Db
                 model,
                 dims,
                 vector: Buffer.from(vector),
+                contentHash,
               })
               .onConflictDoUpdate({
                 target: [embeddings.tenantId, embeddings.documentId, embeddings.model],
-                set: { dims, vector: Buffer.from(vector) },
+                set: { dims, vector: Buffer.from(vector), contentHash },
               })
               .returning()
               .get(),
@@ -71,7 +74,7 @@ export const EmbeddingRepositoryLive: Layer.Layer<EmbeddingRepository, never, Db
       tenantId: TenantId,
       documentId: string,
       model: string,
-    ): Effect.Effect<Uint8Array | null, StorageUnavailable> =>
+    ): Effect.Effect<EmbeddingRow | null, StorageUnavailable> =>
       Effect.gen(function* () {
         const row = yield* Effect.try({
           try: () =>
@@ -88,10 +91,7 @@ export const EmbeddingRepositoryLive: Layer.Layer<EmbeddingRepository, never, Db
               .get(),
           catch: (cause) => new StorageUnavailable({ cause }),
         });
-        if (row === undefined) {
-          return null;
-        }
-        return Uint8Array.from(row.vector);
+        return row ?? null;
       });
 
     const removeByDocument = (

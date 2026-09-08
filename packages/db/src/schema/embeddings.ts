@@ -16,6 +16,7 @@ export const embeddings = sqliteTable(
     model: text("model").notNull(),
     dims: integer("dims").notNull(),
     vector: blob("vector", { mode: "buffer" }).notNull(),
+    contentHash: text("content_hash").notNull(),
   },
   (t) => [
     unique("embeddings_document_model_unique").on(t.tenantId, t.documentId, t.model),

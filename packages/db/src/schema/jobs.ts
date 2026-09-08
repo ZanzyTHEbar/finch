@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { check, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { tenants } from "./tenants.ts";
 
 export const jobs = sqliteTable(
@@ -23,5 +23,6 @@ export const jobs = sqliteTable(
       "jobs_status_valid",
       sql`${t.status} IN ('queued', 'running', 'succeeded', 'failed', 'dead')`,
     ),
+    uniqueIndex("jobs_queued_kind_payload").on(t.tenantId, t.kind, t.payload).where(sql`${t.status} = 'queued'`),
   ],
 );

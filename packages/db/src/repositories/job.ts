@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import {
   StorageUnavailable,
@@ -16,6 +16,14 @@ export interface JobOutcome {
   readonly status: "succeeded" | "failed";
   readonly lastError?: string;
 }
+
+const isUniqueViolation = (cause: unknown): boolean => {
+  const text = cause instanceof Error ? cause.message : String(cause);
+  return text.includes("UNIQUE constraint failed");
+};
+
+const queuedPayload = (payloadText: string | null) =>
+  payloadText === null ? isNull(jobs.payload) : eq(jobs.payload, payloadText);
 
 export class JobRepository extends Context.Tag("JobRepository")<
   JobRepository,
@@ -35,6 +43,11 @@ export class JobRepository extends Context.Tag("JobRepository")<
       tenantId: TenantId,
       limit: number,
     ) => Effect.Effect<readonly JobRow[], StorageUnavailable>;
+    readonly listDueAll: (
+      kind: string,
+      limit: number,
+    ) => Effect.Effect<readonly JobRow[], StorageUnavailable>;
+    readonly reclaimRunning: (kind: string) => Effect.Effect<number, StorageUnavailable>;
   }
 >() {}
 
@@ -65,6 +78,19 @@ export const JobRepositoryLive: Layer.Layer<JobRepository, never, Db> = Layer.ef
           catch: () =>
             new ValidationFailed({ issues: [`job ${kind} payload is not JSON-serializable`] }),
         });
+        const queuedWhere = and(
+          eq(jobs.tenantId, tenantId),
+          eq(jobs.kind, kind),
+          eq(jobs.status, "queued"),
+          queuedPayload(payloadText),
+        );
+        const existing = yield* Effect.try({
+          try: () => db.select().from(jobs).where(queuedWhere).get(),
+          catch: (cause) => new StorageUnavailable({ cause }),
+        });
+        if (existing !== undefined) {
+          return existing;
+        }
         const row = yield* Effect.try({
           try: () =>
             db
@@ -83,7 +109,35 @@ export const JobRepositoryLive: Layer.Layer<JobRepository, never, Db> = Layer.ef
               .returning()
               .get(),
           catch: (cause) => new StorageUnavailable({ cause }),
-        });
+        }).pipe(
+          Effect.catchAll((error) =>
+            Effect.gen(function* () {
+              if (!isUniqueViolation(error.cause)) {
+                return yield* error;
+              }
+              const raced = yield* Effect.try({
+                try: () =>
+                  db
+                    .select()
+                    .from(jobs)
+                    .where(
+                      and(
+                        eq(jobs.tenantId, tenantId),
+                        eq(jobs.kind, kind),
+                        queuedPayload(payloadText),
+                        inArray(jobs.status, ["queued", "running"]),
+                      ),
+                    )
+                    .get(),
+                catch: (cause) => new StorageUnavailable({ cause }),
+              });
+              if (raced === undefined) {
+                return yield* error;
+              }
+              return raced;
+            }),
+          ),
+        );
         if (row === undefined) {
           return yield* new StorageUnavailable({ cause: "jobs enqueue returned no row" });
         }
@@ -168,6 +222,35 @@ export const JobRepositoryLive: Layer.Layer<JobRepository, never, Db> = Layer.ef
         catch: (cause) => new StorageUnavailable({ cause }),
       });
 
-    return { enqueue, claim, finish, listDue };
+    // Privileged worker scan: the job queue is not a tenant-owned ledger.
+    const listDueAll = (
+      kind: string,
+      limit: number,
+    ): Effect.Effect<readonly JobRow[], StorageUnavailable> =>
+      Effect.try({
+        try: () =>
+          db
+            .select()
+            .from(jobs)
+            .where(and(eq(jobs.status, "queued"), eq(jobs.kind, kind)))
+            .orderBy(asc(jobs.createdAt))
+            .limit(limit)
+            .all(),
+        catch: (cause) => new StorageUnavailable({ cause }),
+      });
+
+    const reclaimRunning = (kind: string): Effect.Effect<number, StorageUnavailable> =>
+      Effect.try({
+        try: () =>
+          db
+            .update(jobs)
+            .set({ status: "queued", updatedAt: nowInstant() })
+            .where(and(eq(jobs.kind, kind), eq(jobs.status, "running")))
+            .returning({ id: jobs.id })
+            .all().length,
+        catch: (cause) => new StorageUnavailable({ cause }),
+      });
+
+    return { enqueue, claim, finish, listDue, listDueAll, reclaimRunning };
   }),
 );

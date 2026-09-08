@@ -36,6 +36,8 @@ import { ReconciliationRepository, type ReconciliationRow } from "../repositorie
 import { SearchDocumentRepository } from "../repositories/search-document.ts";
 import { SummaryRepository } from "../repositories/summary.ts";
 import { TransactionRepository } from "../repositories/transaction.ts";
+import { JobRepository } from "../repositories/job.ts";
+import { DOCUMENT_EMBED_JOB_KIND } from "../job-kinds.ts";
 import { tenants } from "../schema/index.ts";
 import { receiptCanonical, summaryCanonical, transactionCanonical } from "./search-documents.ts";
 import { summaryContentKey } from "./summaries.ts";
@@ -88,6 +90,7 @@ export const ProjectionRunnerLive: Layer.Layer<
   | SearchDocumentRepository
   | SummaryRepository
   | ReconciliationRepository
+  | JobRepository
 > = Layer.effect(
   ProjectionRunner,
   Effect.gen(function* () {
@@ -100,11 +103,19 @@ export const ProjectionRunnerLive: Layer.Layer<
     const docs = yield* SearchDocumentRepository;
     const summariesRepo = yield* SummaryRepository;
     const recons = yield* ReconciliationRepository;
+    const jobs = yield* JobRepository;
+
+    const enqueueEmbed = (
+      tenantId: TenantId,
+      sourceType: string,
+      sourceId: string,
+    ): Effect.Effect<void, ValidationFailed | StorageUnavailable> =>
+      jobs.enqueue(tenantId, DOCUMENT_EMBED_JOB_KIND, { sourceType, sourceId }).pipe(Effect.asVoid);
 
     const refreshTransactionDoc = (
       tenantId: TenantId,
       id: string,
-    ): Effect.Effect<void, TransactionNotFound | StorageUnavailable> =>
+    ): Effect.Effect<void, TransactionNotFound | ValidationFailed | StorageUnavailable> =>
       Effect.gen(function* () {
         const row = yield* txs.findById(tenantId, id);
         yield* docs.upsert(
@@ -121,12 +132,13 @@ export const ProjectionRunnerLive: Layer.Layer<
             category: row.category,
           }),
         );
+        yield* enqueueEmbed(tenantId, "transaction", id);
       });
 
     const refreshReceiptDoc = (
       tenantId: TenantId,
       id: string,
-    ): Effect.Effect<void, ReceiptNotFound | StorageUnavailable> =>
+    ): Effect.Effect<void, ReceiptNotFound | ValidationFailed | StorageUnavailable> =>
       Effect.gen(function* () {
         const row = yield* receiptsRepo.findById(tenantId, id);
         yield* docs.upsert(
@@ -143,6 +155,7 @@ export const ProjectionRunnerLive: Layer.Layer<
             transactionId: row.transactionId,
           }),
         );
+        yield* enqueueEmbed(tenantId, "receipt", id);
       });
 
     // A decide event can arrive before its propose (out-of-order replay); in
@@ -328,6 +341,7 @@ export const ProjectionRunnerLive: Layer.Layer<
               aggregateId,
               summaryCanonical(key.periodType, key.period, p.contentHash),
             );
+            yield* enqueueEmbed(tenantId, "summary", aggregateId);
             break;
           }
           default: {
