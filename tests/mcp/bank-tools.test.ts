@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net"
 import { Database } from "bun:sqlite"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { Effect, Layer, Schema } from "effect"
+import { AppConfigTag } from "../../packages/core/src/config/config.ts"
 import { TenantId } from "../../packages/core/src/domain/tenant.ts"
 import { nowInstant } from "../../packages/core/src/domain/time.ts"
 import { EmbeddingProvider } from "../../packages/core/src/ports/embedding-provider.ts"
@@ -14,7 +15,10 @@ import { VectorIndexLive } from "../../packages/db/src/vector-index.ts"
 import { tenants } from "../../packages/db/src/schema/index.ts"
 import { makeEnableBankingService } from "../../packages/enablebanking/src/client.ts"
 import { BankIngestLive } from "../../packages/enablebanking/src/ingest.ts"
+import { BankPaymentsLive } from "../../packages/enablebanking/src/payments.ts"
+import { ReceiptMatcherLive } from "../../packages/reconciliation/src/matcher.ts"
 import { HybridSearchLive } from "../../packages/search/src/hybrid.ts"
+import { NoopRerankerLive } from "../../packages/search/src/rerank.ts"
 import { connectInProcess } from "../../packages/mcp/src/testing.ts"
 import { makeTestLayers, runTest } from "../setup.ts"
 
@@ -49,7 +53,15 @@ describe("MCP bank tools", () => {
         const pathname = url.pathname
         let payload: unknown = { error: "not found" }
         let status = 404
-        if (method === "POST" && pathname === "/auth") {
+        if (method === "GET" && pathname === "/aspsps") {
+          status = 200
+          payload = {
+            aspsps: [
+              { name: "Demo Bank", country: "FI" },
+              { name: "Other Bank", country: "DE" },
+            ],
+          }
+        } else if (method === "POST" && pathname === "/auth") {
           status = 200
           payload = { url: "https://bank.example/authorize" }
         } else if (method === "POST" && pathname === "/sessions") {
@@ -120,11 +132,31 @@ describe("MCP bank tools", () => {
           }),
       }),
     )
+    const testConfig = Layer.succeed(AppConfigTag, {
+      databaseUrl: "file::memory:",
+      sqliteVecPath: "",
+      voyageApiKey: "",
+      voyageModel: "voyage-finance-2",
+      llmAdapter: "opencode",
+      openCodeApiKey: "",
+      openCodeLlmBaseUrl: "https://opencode.ai/zen/v1",
+      openCodeLlmModel: "opencode/claude-sonnet-4-20250514",
+      bankAdapter: "enablebanking",
+      enableBankingBaseUrl: "https://api.enablebanking.com",
+      enableBankingApplicationId: "",
+      enableBankingPrivateKey: "",
+      enableBankingPsuIp: "203.0.113.10",
+      enableBankingPsuUserAgent: "finch-test",
+      enableDistillation: false,
+      enableReranker: false,
+      enableSummaries: false,
+      enableEmbeddings: false,
+    })
     const indexes = Layer.mergeAll(
       Layer.provide(VectorIndexLive, base),
       Layer.provide(LexicalIndexLive, base),
     )
-    const hybrid = Layer.provide(HybridSearchLive, Layer.mergeAll(base, indexes, cannedEmbeddings))
+    const hybrid = Layer.provide(HybridSearchLive, Layer.mergeAll(base, indexes, cannedEmbeddings, NoopRerankerLive, testConfig))
     const bank = Layer.succeed(
       BankProvider,
       makeEnableBankingService({
@@ -136,7 +168,9 @@ describe("MCP bank tools", () => {
       }),
     )
     const ingest = Layer.provide(BankIngestLive, Layer.mergeAll(base, bank))
-    return Layer.mergeAll(base, indexes, cannedEmbeddings, hybrid, bank, ingest)
+    const matcher = Layer.provide(ReceiptMatcherLive, Layer.mergeAll(base, hybrid))
+    const pay = Layer.provide(BankPaymentsLive, Layer.mergeAll(base, bank))
+    return Layer.mergeAll(base, indexes, cannedEmbeddings, testConfig, hybrid, bank, ingest, matcher, pay)
   }
 
   it("binds auth state to tenant, syncs booked txs, and deletes the session", async () => {
@@ -157,6 +191,10 @@ describe("MCP bank tools", () => {
       )
       const mcp = await connectInProcess(layer)
       try {
+        const aspsps = await mcp.callTool("list_aspsps", { country: "FI" })
+        expect(aspsps.isError).not.toBe(true)
+        expect(JSON.parse(aspsps.text)).toEqual([{ name: "Demo Bank", country: "FI" }])
+
         const started = await mcp.callTool("start_bank_auth", {
           tenantId: TID,
           aspspName: "Demo Bank",
@@ -191,6 +229,62 @@ describe("MCP bank tools", () => {
         const deleted = await mcp.callTool("delete_bank_session", { tenantId: TID })
         expect(deleted.isError).not.toBe(true)
         expect(JSON.parse(deleted.text)).toEqual({ deleted: true })
+      } finally {
+        await mcp.close()
+      }
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("get_bank_status reports connected and disconnected states", async () => {
+    const sqlite = new Database(":memory:")
+    try {
+      const layer = makeLayers(sqlite)
+      await runTest(
+        layer,
+        Effect.gen(function* () {
+          const { db } = yield* Db
+          yield* Effect.sync(() =>
+            db.insert(tenants).values({ id: TID, name: TID, createdAt: nowInstant() }).run(),
+          )
+        }),
+      )
+      const mcp = await connectInProcess(layer)
+      try {
+        // Before connecting: disconnected
+        const statusBefore = await mcp.callTool("get_bank_status", { tenantId: TID })
+        expect(statusBefore.isError).not.toBe(true)
+        expect(JSON.parse(statusBefore.text)).toEqual({ connected: false })
+
+        // Connect
+        await mcp.callTool("start_bank_auth", {
+          tenantId: TID,
+          aspspName: "Demo Bank",
+          aspspCountry: "FI",
+          redirectUrl: "https://finch.example/callback",
+          state: "state-status-1",
+        })
+        await mcp.callTool("authorize_bank_session", {
+          tenantId: TID,
+          code: "auth-code",
+          state: "state-status-1",
+        })
+
+        // After connecting: connected with sessionId
+        const statusAfter = await mcp.callTool("get_bank_status", { tenantId: TID })
+        expect(statusAfter.isError).not.toBe(true)
+        const parsed = JSON.parse(statusAfter.text)
+        expect(parsed.connected).toBe(true)
+        expect(parsed.sessionId).toBe("sess-mcp-1")
+
+        // Disconnect
+        await mcp.callTool("delete_bank_session", { tenantId: TID })
+
+        // After disconnecting: disconnected again
+        const statusDisconnected = await mcp.callTool("get_bank_status", { tenantId: TID })
+        expect(statusDisconnected.isError).not.toBe(true)
+        expect(JSON.parse(statusDisconnected.text)).toEqual({ connected: false })
       } finally {
         await mcp.close()
       }

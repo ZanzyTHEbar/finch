@@ -20,6 +20,7 @@ import {
 } from "@finch/db"
 import { contentHash } from "./content-hash.ts"
 import { formatDocumentId } from "./document-id.ts"
+import { Distiller } from "./distill.ts"
 
 export interface DrainStats {
   readonly processed: number
@@ -65,6 +66,7 @@ export const DocumentEmbedWorkerLive: Layer.Layer<
   | JobRepository
   | SearchDocumentRepository
   | EmbeddingRepository
+  | Distiller
 > = Layer.effect(
   DocumentEmbedWorker,
   Effect.gen(function* () {
@@ -74,6 +76,7 @@ export const DocumentEmbedWorkerLive: Layer.Layer<
     const jobs = yield* JobRepository
     const docs = yield* SearchDocumentRepository
     const stored = yield* EmbeddingRepository
+    const distiller = yield* Distiller
     const model = config.voyageModel
 
     const processClaimed = (
@@ -101,7 +104,10 @@ export const DocumentEmbedWorkerLive: Layer.Layer<
           )
           return "skipped" as const
         }
-        const [embedded] = yield* embeddings.embedDocuments([row.content])
+        const contentToEmbed = config.enableDistillation
+          ? yield* distiller.distill(payload.sourceType, row.content)
+          : row.content
+        const [embedded] = yield* embeddings.embedDocuments([contentToEmbed])
         if (embedded === undefined) {
           return yield* new ValidationFailed({ issues: ["embedDocuments returned no vector"] })
         }

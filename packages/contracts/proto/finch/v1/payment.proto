@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package finch.v1;
+
+import "finch/v1/common.proto";
+
+service PaymentService {
+  rpc CreatePayment(CreatePaymentRequest) returns (CreatePaymentResponse);
+  rpc GetPayment(GetPaymentRequest) returns (GetPaymentResponse);
+  rpc ListPayments(ListPaymentsRequest) returns (ListPaymentsResponse);
+  rpc SubmitPayment(SubmitPaymentRequest) returns (SubmitPaymentResponse);
+  rpc DeletePayment(DeletePaymentRequest) returns (DeletePaymentResponse);
+  rpc GetPaymentStatus(GetPaymentStatusRequest) returns (GetPaymentStatusResponse);
+}
+
+enum PaymentStatus {
+  PAYMENT_STATUS_UNSPECIFIED = 0;
+  PAYMENT_STATUS_DRAFT = 1;
+  PAYMENT_STATUS_SUBMISSION_PENDING = 2;
+  PAYMENT_STATUS_SUBMITTED = 3;
+  PAYMENT_STATUS_COMPLETED = 4;
+  PAYMENT_STATUS_REJECTED = 5;
+  PAYMENT_STATUS_FAILED = 6;
+  PAYMENT_STATUS_SUBMISSION_UNKNOWN = 7;
+  PAYMENT_STATUS_CANCELLED = 8;
+}
+
+message Payment {
+  string id = 1;
+  PaymentStatus status = 2;
+  string bank_connection_id = 3;
+  string creditor_name = 4;
+  string creditor_iban = 5;
+  Money amount = 6;
+  string payment_type = 7;
+  string remittance = 8;
+  string authorization_url = 9;
+  string provider_status = 10;
+  // RFC 3339 timestamps.
+  string created_at = 11;
+  string updated_at = 12;
+}
+
+message CreatePaymentRequest {
+  string workspace_id = 1;
+  // Selects an authorized connection; callers do not select an ASPSP directly.
+  string bank_connection_id = 2;
+  // Relative post-provider route. Lib validates it against the registered
+  // client origin and generates the opaque, single-use provider state.
+  string return_path = 3;
+  string creditor_name = 4;
+  string creditor_iban = 5;
+  Money amount = 6;
+  string payment_type = 7;
+  string remittance = 8;
+  // Required non-empty opaque client key. Replays atomically return the
+  // original payment without a duplicate provider submission.
+  string idempotency_key = 9;
+}
+
+message CreatePaymentResponse {
+  Payment payment = 1;
+}
+
+message GetPaymentRequest {
+  string workspace_id = 1;
+  string payment_id = 2;
+}
+
+message GetPaymentResponse {
+  Payment payment = 1;
+}
+
+message ListPaymentsRequest {
+  string workspace_id = 1;
+  PageRequest page = 2;
+}
+
+message ListPaymentsResponse {
+  repeated Payment payments = 1;
+  PageResponse page = 2;
+}
+
+message SubmitPaymentRequest {
+  string workspace_id = 1;
+  string payment_id = 2;
+  // Required non-empty opaque client key. Replays atomically return the
+  // original submission outcome without submitting again.
+  string idempotency_key = 3;
+}
+
+message SubmitPaymentResponse {
+  Payment payment = 1;
+}
+
+message DeletePaymentRequest {
+  string workspace_id = 1;
+  string payment_id = 2;
+}
+
+message DeletePaymentResponse {
+  bool deleted = 1;
+}
+
+message GetPaymentStatusRequest {
+  string workspace_id = 1;
+  string payment_id = 2;
+}
+
+message GetPaymentStatusResponse {
+  PaymentStatus status = 1;
+  string provider_status = 2;
+}

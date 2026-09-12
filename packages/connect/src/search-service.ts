@@ -1,164 +1,197 @@
 import { create } from "@bufbuild/protobuf"
 import { Code, ConnectError, type ServiceImpl } from "@connectrpc/connect"
-import { Cause, ConfigError, Effect, Exit, Layer, ManagedRuntime, Schema } from "effect"
-import { AppConfigLive, EmbeddingProvider, StorageUnavailable, TenantId } from "@finch/core"
+import { Cause, ConfigError, Effect, Exit, Layer, ManagedRuntime } from "effect"
 import {
-  EmbeddingRepositoryLive,
-  JobRepositoryLive,
+  SearchFinanceResponseSchema,
+  SearchService,
+  type SearchFinanceRequest,
+  type SearchFinanceResponse,
+} from "@finch/contracts"
+import { AppConfigLive, type EmbeddingProvider, type TenantId } from "@finch/core"
+import {
+  SearchPort,
+  SearchUnavailable,
+  ValidationFailed,
+  WorkspaceAccess,
+  WorkspaceAccessDenied,
+  WorkspaceAccessUnavailable,
+  searchFinance,
+  type SearchFinanceResult,
+  type SearchPortInput,
+  type SearchPortError,
+} from "@finch/lib"
+import {
   LexicalIndexLive,
   MigratedSqliteLive,
   SearchDocumentRepositoryLive,
   VectorIndexLive,
 } from "@finch/db"
-import { DocumentEmbedWorker, DocumentEmbedWorkerLive, type DrainStats } from "@finch/search/embed-worker"
-import { HybridSearch, HybridSearchLive } from "@finch/search/hybrid"
-import {
-  SearchResponseSchema,
-  SearchService,
-  type SearchRequest,
-  type SearchResponse,
-} from "./gen/finch/search/v1/search_pb.ts"
+import { HybridSearch, HybridSearchLive, type HybridSearchResult } from "@finch/search/hybrid"
+import { NoopRerankerLive } from "@finch/search/rerank"
+import { requireConnectPrincipal, type ConnectPrincipalResolver } from "./principal.ts"
 
 // Db file-backed via DATABASE_URL (AppConfigLive reads the environment).
 // DbLive is referenced — never rebuilt — by every branch below: Effect
 // memoizes layers by reference within a single build, so the SQLite
 // connection opens exactly once no matter how many branches consume it.
-const DbLive = Layer.provide(MigratedSqliteLive, AppConfigLive)
-const SearchDocumentRepositoryProvided = Layer.provide(SearchDocumentRepositoryLive, DbLive)
-const VectorIndexProvided = Layer.provide(VectorIndexLive, DbLive)
-const JobRepositoryProvided = Layer.provide(JobRepositoryLive, DbLive)
-const EmbeddingRepositoryProvided = Layer.provide(EmbeddingRepositoryLive, DbLive)
+export const ConnectDbLive = Layer.provide(MigratedSqliteLive, AppConfigLive)
+const SearchDocumentRepositoryProvided = Layer.provide(SearchDocumentRepositoryLive, ConnectDbLive)
+const VectorIndexProvided = Layer.provide(VectorIndexLive, ConnectDbLive)
 const LexicalIndexProvided = Layer.provide(
   LexicalIndexLive,
-  Layer.mergeAll(DbLive, SearchDocumentRepositoryProvided),
+  Layer.mergeAll(ConnectDbLive, SearchDocumentRepositoryProvided),
 )
 
-/**
- * Production HybridSearch stack: HybridSearchLive over the live vec0 + FTS
- * indexes on the file-backed Db from DATABASE_URL.
- *
- * The EmbeddingProvider is a constructor param so serving and tests pick
- * their own implementation:
- * - serve with Voyage: `Layer.provide(VoyageEmbeddingProviderLive, AppConfigLive)`
- * - tests: `Layer.succeed(EmbeddingProvider, <canned double>)`
- */
+/** Production HybridSearch stack over the file-backed SQLite indexes. */
 export const SearchLayerLive = <E>(
   embeddings: Layer.Layer<EmbeddingProvider, E>,
-): Layer.Layer<HybridSearch, E | ConfigError.ConfigError | StorageUnavailable> =>
+): Layer.Layer<HybridSearch, E | Error | ConfigError.ConfigError> =>
   Layer.provide(
     HybridSearchLive,
     Layer.mergeAll(
-      DbLive,
+      AppConfigLive,
+      ConnectDbLive,
       embeddings,
       SearchDocumentRepositoryProvided,
       VectorIndexProvided,
       LexicalIndexProvided,
+      NoopRerankerLive,
     ),
   )
 
-export const EmbedWorkerLayerLive = <E>(
-  embeddings: Layer.Layer<EmbeddingProvider, E>,
-): Layer.Layer<DocumentEmbedWorker, E | ConfigError.ConfigError | StorageUnavailable> =>
-  Layer.provide(
-    DocumentEmbedWorkerLive,
-    Layer.mergeAll(
-      AppConfigLive,
-      embeddings,
-      VectorIndexProvided,
-      JobRepositoryProvided,
-      SearchDocumentRepositoryProvided,
-      EmbeddingRepositoryProvided,
-    ),
-  )
+const entityForDocument = (documentId: string) => {
+  const separator = documentId.indexOf(":")
+  if (separator <= 0 || separator === documentId.length - 1) {
+    return { entityId: documentId, entityType: "document" }
+  }
+  return {
+    entityId: documentId.slice(separator + 1),
+    entityType: documentId.slice(0, separator),
+  }
+}
 
-const toConnectError = (cause: unknown): ConnectError => {
+const toSearchFinanceResult = (result: HybridSearchResult): SearchFinanceResult => ({
+  hits: result.hits.map((hit) => ({
+    ...entityForDocument(hit.documentId),
+    // The legacy index has no display metadata; retain its stable document id as the title.
+    title: hit.documentId,
+    snippet: "",
+    fusedScore: hit.fusedScore,
+    ...(hit.denseRank === undefined ? {} : { denseRank: hit.denseRank }),
+    ...(hit.lexicalRank === undefined ? {} : { lexicalRank: hit.lexicalRank }),
+    ...(hit.denseSimilarity === undefined ? {} : { denseSimilarity: hit.denseSimilarity }),
+    ...(hit.lexicalScore === undefined ? {} : { lexicalScore: hit.lexicalScore }),
+    sources: [...hit.sources],
+  })),
+  diagnostics: { ...result.diagnostics },
+})
+
+const toTenantId = (workspaceId: SearchPortInput["workspaceId"]): TenantId =>
+  // ponytail: SQLite search is tenant-keyed; both branded scopes are validated non-empty strings.
+  workspaceId as unknown as TenantId
+
+/** Bridges the current HybridSearch adapter to lib's transport-agnostic port. */
+export const HybridSearchPortLive: Layer.Layer<SearchPort, never, HybridSearch> = Layer.effect(
+  SearchPort,
+  Effect.gen(function* () {
+    const hybridSearch = yield* HybridSearch
+    return SearchPort.of({
+      search: (input): Effect.Effect<SearchFinanceResult, SearchPortError> =>
+        hybridSearch
+          .hybridSearch({
+            tenantId: toTenantId(input.workspaceId),
+            text: input.query,
+            ...(input.topK === undefined ? {} : { topK: input.topK }),
+            ...(input.candidateMultiplier === undefined
+              ? {}
+              : { candidateMultiplier: input.candidateMultiplier }),
+          })
+          .pipe(
+            Effect.map(toSearchFinanceResult),
+            Effect.mapError((error): SearchPortError =>
+              error instanceof ValidationFailed ? error : new SearchUnavailable(),
+            ),
+          ),
+    })
+  }),
+)
+
+export const toConnectError = (cause: unknown): ConnectError => {
   if (cause instanceof ConnectError) {
     return cause
   }
-  if (typeof cause === "object" && cause !== null && "_tag" in cause) {
-    const tag = (cause as { readonly _tag: string })._tag
-    if (tag === "ValidationFailed") {
-      const issues =
-        "issues" in cause && Array.isArray((cause as { issues: unknown }).issues)
-          ? (cause as { issues: readonly unknown[] }).issues.join("; ")
-          : "invalid request"
-      return new ConnectError(`invalid search request: ${issues}`, Code.InvalidArgument)
-    }
-    if (tag === "StorageUnavailable") {
-      return new ConnectError("search storage unavailable", Code.Unavailable)
-    }
-    if (tag === "EmbeddingError" || tag === "EmbeddingDimsMismatch") {
-      return new ConnectError("embedding provider failed", Code.Unavailable)
-    }
+  if (cause instanceof WorkspaceAccessDenied) {
+    return new ConnectError("workspace access denied", Code.PermissionDenied)
+  }
+  if (cause instanceof WorkspaceAccessUnavailable) {
+    return new ConnectError("workspace access unavailable", Code.Unavailable)
+  }
+  if (cause instanceof ValidationFailed) {
+    return new ConnectError(`invalid search request: ${cause.issues.join("; ")}`, Code.InvalidArgument)
+  }
+  if (cause instanceof SearchUnavailable) {
+    return new ConnectError("search unavailable", Code.Unavailable)
   }
   return new ConnectError("search failed", Code.Internal)
 }
 
-const searchEffect = (
-  request: SearchRequest,
-): Effect.Effect<SearchResponse, ConnectError, HybridSearch | DocumentEmbedWorker> =>
-  Effect.gen(function* () {
-    const tenantId = yield* Schema.decodeUnknown(TenantId)(request.tenantId).pipe(
-      Effect.mapError(
-        () => new ConnectError("invalid tenant_id: must be a non-empty string", Code.InvalidArgument),
-      ),
-    )
-    const search = yield* HybridSearch
-    const result = yield* search.hybridSearch({
-      tenantId,
-      text: request.text,
-      // Proto scalars default to 0, which means "server default" here.
-      ...(request.topK > 0 ? { topK: request.topK } : {}),
-      ...(request.candidateMultiplier > 0
-        ? { candidateMultiplier: request.candidateMultiplier }
-        : {}),
-    })
-    return create(SearchResponseSchema, {
-      hits: result.hits.map((hit) => ({
-        documentId: hit.documentId,
-        fusedScore: hit.fusedScore,
-        denseRank: hit.denseRank,
-        lexicalRank: hit.lexicalRank,
-        denseSimilarity: hit.denseSimilarity,
-        lexicalScore: hit.lexicalScore,
-        sources: [...hit.sources],
-      })),
-      diagnostics: { ...result.diagnostics },
-    })
-  }).pipe(Effect.mapError(toConnectError))
+export interface SearchServiceDependencies<E> {
+  readonly principalResolver: ConnectPrincipalResolver
+  readonly layer: Layer.Layer<SearchPort | WorkspaceAccess, E>
+}
 
 export interface SearchServiceHandle {
   readonly impl: ServiceImpl<typeof SearchService>
   readonly dispose: () => Promise<void>
-  readonly drainEmbeds: () => Promise<DrainStats>
 }
 
-/** Bind the Search RPC to a HybridSearch stack. Stack build failures
- * (e.g. bad DATABASE_URL) surface as rejected RPCs via toConnectError. */
 export const makeSearchService = <E>(
-  layer: Layer.Layer<HybridSearch | DocumentEmbedWorker, E>,
+  dependencies: SearchServiceDependencies<E>,
+  runtime: ManagedRuntime.ManagedRuntime<SearchPort | WorkspaceAccess, E> = ManagedRuntime.make(dependencies.layer),
 ): SearchServiceHandle => {
-  const runtime = ManagedRuntime.make(layer)
+  const run = (request: SearchFinanceRequest, principal: NonNullable<Awaited<ReturnType<ConnectPrincipalResolver["resolve"]>>>) =>
+    runtime.runPromiseExit(
+      searchFinance(principal, {
+        workspaceId: request.workspaceId,
+        query: request.query,
+        ...(request.topK > 0 ? { topK: request.topK } : {}),
+        ...(request.candidateMultiplier > 0
+          ? { candidateMultiplier: request.candidateMultiplier }
+          : {}),
+      }),
+    ).then((exit) => {
+      if (Exit.isSuccess(exit)) {
+        return create(SearchFinanceResponseSchema, {
+          hits: exit.value.hits.map((hit) => ({
+            entityId: hit.entityId,
+            entityType: hit.entityType,
+            title: hit.title,
+            snippet: hit.snippet,
+            fusedScore: hit.fusedScore,
+            ...(hit.denseRank === undefined ? {} : { denseRank: hit.denseRank }),
+            ...(hit.lexicalRank === undefined ? {} : { lexicalRank: hit.lexicalRank }),
+            ...(hit.denseSimilarity === undefined
+              ? {}
+              : { denseSimilarity: hit.denseSimilarity }),
+            ...(hit.lexicalScore === undefined ? {} : { lexicalScore: hit.lexicalScore }),
+            sources: [...hit.sources],
+          })),
+          diagnostics: { ...exit.value.diagnostics },
+        })
+      }
+      throw toConnectError(Cause.squash(exit.cause))
+    })
+
   return {
     impl: {
-      search: (request) =>
-        runtime.runPromiseExit(searchEffect(request)).then((exit) => {
-          if (Exit.isSuccess(exit)) {
-            return exit.value
-          }
-          throw toConnectError(Cause.squash(exit.cause))
-        }),
+      searchFinance: async (request, context) => {
+        const principal = await requireConnectPrincipal(dependencies.principalResolver, context)
+        if (request.page !== undefined) {
+          throw new ConnectError("search pagination is not supported", Code.InvalidArgument)
+        }
+        return run(request, principal)
+      },
     },
     dispose: () => runtime.dispose(),
-    drainEmbeds: () =>
-      runtime.runPromise(
-        Effect.gen(function* () {
-          const worker = yield* DocumentEmbedWorker
-          yield* worker.requeueAllMissing()
-          return yield* worker.drain(500)
-        }).pipe(Effect.mapError(toConnectError)),
-      ),
   }
 }
-
-

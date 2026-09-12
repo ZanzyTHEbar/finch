@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { ReceiptNotFound, StorageUnavailable, TransactionNotFound, type TenantId } from "@finch/core";
 import { Db } from "../client.ts";
@@ -27,6 +27,9 @@ export class ReceiptRepository extends Context.Tag("ReceiptRepository")<
       tenantId: TenantId,
       limit?: number,
     ) => Effect.Effect<readonly ReceiptRow[], StorageUnavailable>;
+    readonly listLinkedTransactionIds: (
+      tenantId: TenantId,
+    ) => Effect.Effect<readonly string[], StorageUnavailable>;
   }
 >() {}
 
@@ -124,6 +127,20 @@ export const ReceiptRepositoryLive: Layer.Layer<ReceiptRepository, never, Db> = 
         catch: (cause) => new StorageUnavailable({ cause }),
       });
 
-    return { insert, findById, linkTransaction, listUnmatched };
+    const listLinkedTransactionIds = (
+      tenantId: TenantId,
+    ): Effect.Effect<readonly string[], StorageUnavailable> =>
+      Effect.try({
+        try: () =>
+          db
+            .select({ transactionId: receipts.transactionId })
+            .from(receipts)
+            .where(and(eq(receipts.tenantId, tenantId), isNotNull(receipts.transactionId)))
+            .all()
+            .flatMap((row) => (row.transactionId === null ? [] : [row.transactionId])),
+        catch: (cause) => new StorageUnavailable({ cause }),
+      });
+
+    return { insert, findById, linkTransaction, listUnmatched, listLinkedTransactionIds };
   }),
 );

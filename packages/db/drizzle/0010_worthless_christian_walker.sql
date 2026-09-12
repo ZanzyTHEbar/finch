@@ -1,0 +1,1 @@
+ALTER TABLE `bank_sessions` ADD `status` text DEFAULT 'active' NOT NULL;

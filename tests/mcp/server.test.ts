@@ -2,6 +2,7 @@ import { generateKeyPairSync } from "node:crypto"
 import { Database } from "bun:sqlite"
 import { Effect, Layer, Schema } from "effect"
 import { describe, expect, it } from "vitest"
+import { AppConfigTag } from "../../packages/core/src/config/config.ts"
 import { TenantId } from "../../packages/core/src/domain/tenant.ts"
 import type { TenantId as TenantIdT } from "../../packages/core/src/domain/tenant.ts"
 import { nowInstant } from "../../packages/core/src/domain/time.ts"
@@ -16,9 +17,12 @@ import { SearchDocumentRepository } from "../../packages/db/src/repositories/sea
 import { TransactionRepository } from "../../packages/db/src/repositories/transaction.ts"
 import { makeEnableBankingService } from "../../packages/enablebanking/src/client.ts"
 import { BankIngestLive } from "../../packages/enablebanking/src/ingest.ts"
+import { BankPaymentsLive } from "../../packages/enablebanking/src/payments.ts"
+import { ReceiptMatcherLive } from "../../packages/reconciliation/src/matcher.ts"
 import { tenants } from "../../packages/db/src/schema/index.ts"
 import { VectorIndexLive } from "../../packages/db/src/vector-index.ts"
 import { HybridSearchLive } from "../../packages/search/src/hybrid.ts"
+import { NoopRerankerLive } from "../../packages/search/src/rerank.ts"
 import { connectInProcess } from "../../packages/mcp/src/testing.ts"
 import { makeTestLayers, runTest } from "../setup.ts"
 
@@ -62,11 +66,31 @@ const makeLayers = (sqlite: Database) => {
       embedQuery: () => Effect.succeed({ model: MODEL, dims: DIMS, vector: queryVector() }),
     }),
   )
+  const testConfig = Layer.succeed(AppConfigTag, {
+    databaseUrl: "file::memory:",
+    sqliteVecPath: "",
+    voyageApiKey: "",
+    voyageModel: MODEL,
+    llmAdapter: "opencode",
+    openCodeApiKey: "",
+    openCodeLlmBaseUrl: "https://opencode.ai/zen/v1",
+    openCodeLlmModel: "opencode/claude-sonnet-4-20250514",
+    bankAdapter: "enablebanking",
+    enableBankingBaseUrl: "https://api.enablebanking.com",
+    enableBankingApplicationId: "",
+    enableBankingPrivateKey: "",
+    enableBankingPsuIp: "203.0.113.10",
+    enableBankingPsuUserAgent: "finch-test",
+    enableDistillation: false,
+    enableReranker: false,
+    enableSummaries: false,
+    enableEmbeddings: false,
+  })
   const indexes = Layer.mergeAll(
     Layer.provide(VectorIndexLive, base),
     Layer.provide(LexicalIndexLive, base),
   )
-  const hybrid = Layer.provide(HybridSearchLive, Layer.mergeAll(base, indexes, cannedEmbeddings))
+  const hybrid = Layer.provide(HybridSearchLive, Layer.mergeAll(base, indexes, cannedEmbeddings, NoopRerankerLive, testConfig))
   const bank = Layer.succeed(
     BankProvider,
     makeEnableBankingService({
@@ -78,7 +102,9 @@ const makeLayers = (sqlite: Database) => {
     }),
   )
   const ingest = Layer.provide(BankIngestLive, Layer.mergeAll(base, bank))
-  return Layer.mergeAll(base, indexes, cannedEmbeddings, hybrid, bank, ingest)
+  const matcher = Layer.provide(ReceiptMatcherLive, Layer.mergeAll(base, hybrid))
+  const pay = Layer.provide(BankPaymentsLive, Layer.mergeAll(base, bank))
+  return Layer.mergeAll(base, indexes, cannedEmbeddings, testConfig, hybrid, bank, ingest, matcher, pay)
 }
 
 const seedLedger = (tid: TenantIdT) =>
@@ -162,12 +188,26 @@ describe("finch MCP server", () => {
         const tools = await mcp.listTools()
         expect(tools.tools.map((t) => t.name).sort()).toStrictEqual([
           "authorize_bank_session",
+          "capture_receipt",
+          "confirm_match",
+          "create_payment",
+          "data_privacy",
+          "delete_account",
           "delete_bank_session",
+          "delete_payment",
+          "export_data",
+          "get_bank_status",
+          "get_payment",
           "get_receipt",
           "get_transaction",
+          "list_aspsps",
+          "list_payments",
           "list_unmatched_receipts",
+          "match_receipts",
+          "reject_match",
           "search_finances",
           "start_bank_auth",
+          "submit_payment",
           "sync_bank",
         ])
       } finally {
@@ -247,6 +287,38 @@ describe("finch MCP server", () => {
         const miss = await mcp.callTool("get_receipt", { tenantId: "t-mcp-a", id: "rc-nope" })
         expect(miss.isError).toBe(true)
         expect((JSON.parse(miss.text) as Record<string, unknown>)["error"]).toBe("ReceiptNotFound")
+      } finally {
+        await mcp.close()
+      }
+    })
+  })
+
+  it("capture_receipt projects a row and is idempotent", async () => {
+    await withStack(async (layer) => {
+      const mcp = await connectInProcess(layer)
+      try {
+        const args = {
+          tenantId: "t-mcp-a",
+          totalMinor: 1500,
+          imageHash: "hash-cap-1",
+          sourceUri: "img://cap-1",
+          merchant: "Cafe",
+          receiptDate: "2026-09-03",
+          currency: "EUR",
+        }
+        const first = await mcp.callTool("capture_receipt", args)
+        expect(first.isError).not.toBe(true)
+        expect(JSON.parse(first.text)).toEqual({ id: "t-mcp-a:hash-cap-1", duplicate: false })
+
+        const got = await mcp.callTool("get_receipt", { tenantId: "t-mcp-a", id: "t-mcp-a:hash-cap-1" })
+        expect(got.isError).not.toBe(true)
+        const row = JSON.parse(got.text) as { merchant: string; totalMinor: string }
+        expect(row.merchant).toBe("Cafe")
+        expect(row.totalMinor).toBe("1500")
+
+        const second = await mcp.callTool("capture_receipt", args)
+        expect(second.isError).not.toBe(true)
+        expect(JSON.parse(second.text)).toEqual({ id: "t-mcp-a:hash-cap-1", duplicate: true })
       } finally {
         await mcp.close()
       }

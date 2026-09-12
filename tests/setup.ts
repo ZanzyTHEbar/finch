@@ -48,6 +48,10 @@ import {
   BankAuthIntentRepositoryLive,
   type BankAuthIntentRepository,
 } from "../packages/db/src/repositories/bank-auth-intent.ts";
+import {
+  PaymentRepositoryLive,
+  type PaymentRepository,
+} from "../packages/db/src/repositories/payment.ts";
 
 export type TestServices =
   | Db
@@ -56,6 +60,7 @@ export type TestServices =
   | AccountRepository
   | BankSessionRepository
   | BankAuthIntentRepository
+  | PaymentRepository
   | TransactionRepository
   | ReceiptRepository
   | SearchDocumentRepository
@@ -78,6 +83,7 @@ export const makeTestLayers = (sqlite: Database) => {
     AccountRepositoryLive,
     BankSessionRepositoryLive,
     BankAuthIntentRepositoryLive,
+    PaymentRepositoryLive,
     TransactionRepositoryLive,
     ReceiptRepositoryLive,
     SearchDocumentRepositoryLive,

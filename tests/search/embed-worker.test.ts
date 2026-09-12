@@ -16,6 +16,7 @@ import { VectorIndexLive } from "../../packages/db/src/vector-index.ts"
 import { contentHash } from "../../packages/search/src/content-hash.ts"
 import { formatDocumentId } from "../../packages/search/src/document-id.ts"
 import { DocumentEmbedWorker, DocumentEmbedWorkerLive } from "../../packages/search/src/embed-worker.ts"
+import { NoopDistillerLive } from "../../packages/search/src/distill.ts"
 import { makeTestLayers, runTest } from "../setup.ts"
 
 const TIDA = Schema.decodeUnknownSync(TenantId)("t-embed-a")
@@ -86,15 +87,24 @@ const workerLayers = (sqlite: Database, embedder: Layer.Layer<EmbeddingProvider>
     sqliteVecPath: "",
     voyageApiKey: "",
     voyageModel: "voyage-finance-2",
+    llmAdapter: "opencode",
+    openCodeApiKey: "",
+    openCodeLlmBaseUrl: "https://opencode.ai/zen/v1",
+    openCodeLlmModel: "opencode/claude-sonnet-4-20250514",
+    bankAdapter: "enablebanking",
     enableBankingBaseUrl: "https://api.enablebanking.com",
     enableBankingApplicationId: "",
     enableBankingPrivateKey: "",
     enableBankingPsuIp: "203.0.113.10",
     enableBankingPsuUserAgent: "finch-test",
+    enableDistillation: false,
+    enableReranker: false,
+    enableSummaries: false,
+    enableEmbeddings: false,
   })
   const worker = Layer.provide(
     DocumentEmbedWorkerLive,
-    Layer.mergeAll(base, vectors, config, embedder),
+    Layer.mergeAll(base, vectors, config, embedder, NoopDistillerLive),
   )
   return Layer.mergeAll(base, vectors, config, embedder, worker)
 }

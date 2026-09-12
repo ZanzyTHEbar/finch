@@ -6,12 +6,19 @@
   "exports": {
     ".": "./src/server.ts"
   },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
   "dependencies": {
     "@finch/core": "workspace:*",
     "@finch/db": "workspace:*",
     "@finch/enablebanking": "workspace:*",
+    "@finch/lib-legacy": "workspace:*",
+    "@finch/llm": "workspace:*",
+    "@finch/reconciliation": "workspace:*",
     "@finch/search": "workspace:*",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "drizzle-orm": "0.45.2",
     "effect": "3.22.1"
   }
 }

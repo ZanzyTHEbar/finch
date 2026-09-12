@@ -69,5 +69,5 @@ export const receiptCanonical = (r: ReceiptCanonicalInput): string => {
 export const summaryCanonical = (
   periodType: string,
   period: string,
-  contentHash: string,
-): string => `summary ${periodType} ${period}, content ${contentHash}.`;
+  contentText: string,
+): string => `summary ${periodType} ${period}: ${contentText}.`;

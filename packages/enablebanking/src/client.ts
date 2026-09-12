@@ -4,12 +4,16 @@ import {
   BankProvider,
   IsoDate,
   ProviderUnavailable,
+  ValidationFailed,
   normalizeCurrency,
+  toMajor,
   type AppConfig,
   type BankAccountSnapshot,
   type BankAspsp,
+  type BankPayment,
   type BankProviderConfig,
   type BankTransactionSnapshot,
+  type CreateBankPaymentInput,
   type CurrencyCode,
 } from "@finch/core"
 import { signEnableBankingJwt } from "./jwt.ts"
@@ -24,6 +28,18 @@ const asString = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined
 
 const originOf = (baseUrl: string): string => baseUrl.replace(/\/$/, "")
+
+const parseHttpsUrl = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined
+  }
+  try {
+    const url = new URL(value)
+    return url.protocol === "https:" && url.username === "" && url.password === "" ? url.toString() : undefined
+  } catch {
+    return undefined
+  }
+}
 
 const parseCurrency = (raw: unknown): CurrencyCode | undefined => {
   const text = asString(raw)
@@ -137,7 +153,7 @@ export const makeEnableBankingService = (config: BankProviderConfig) => {
   const origin = originOf(config.baseUrl)
 
   const credentialsMissing = (): ProviderUnavailable | null =>
-    config.applicationId === "" || config.privateKeyPem === ""
+    config.applicationId.trim() === "" || config.privateKeyPem.trim() === ""
       ? new ProviderUnavailable({ message: "Enable Banking credentials missing" })
       : null
 
@@ -178,6 +194,7 @@ export const makeEnableBankingService = (config: BankProviderConfig) => {
           fetch(`${origin}${path}`, {
             method,
             headers,
+            signal: AbortSignal.timeout(30_000),
             ...(options?.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
           }),
         catch: (cause) =>
@@ -197,6 +214,7 @@ export const makeEnableBankingService = (config: BankProviderConfig) => {
       if (response.status < 200 || response.status >= 300) {
         return yield* new ProviderUnavailable({
           message: `Enable Banking ${String(response.status)}`,
+          status: response.status,
         })
       }
       if (options?.parseJson === false) {
@@ -214,16 +232,17 @@ export const makeEnableBankingService = (config: BankProviderConfig) => {
       const body = yield* request("GET", "/aspsps")
       const aspsps = asRecord(body)?.["aspsps"]
       if (!Array.isArray(aspsps)) {
-        return []
+        return yield* new ProviderUnavailable({ message: "Enable Banking ASPSP response missing aspsps" })
       }
       const mapped: BankAspsp[] = []
       for (const item of aspsps) {
         const record = asRecord(item)
         const name = asString(record?.["name"])
         const country = asString(record?.["country"])
-        if (name !== undefined && country !== undefined) {
-          mapped.push({ name, country })
+        if (name === undefined || country === undefined) {
+          return yield* new ProviderUnavailable({ message: "Enable Banking ASPSP response contains invalid ASPSP" })
         }
+        mapped.push({ name, country })
       }
       return mapped
     })
@@ -234,7 +253,7 @@ export const makeEnableBankingService = (config: BankProviderConfig) => {
     readonly state: string
   }): Effect.Effect<{ readonly url: string }, ProviderUnavailable> =>
     Effect.gen(function* () {
-      const validUntil = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString()
+      const validUntil = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString()
       const body = yield* request(
         "POST",
         "/auth",
@@ -249,7 +268,7 @@ export const makeEnableBankingService = (config: BankProviderConfig) => {
           },
         },
       )
-      const url = asString(asRecord(body)?.["url"])
+      const url = parseHttpsUrl(asRecord(body)?.["url"])
       if (url === undefined) {
         return yield* new ProviderUnavailable({ message: "Enable Banking auth response missing url" })
       }
@@ -328,6 +347,7 @@ export const makeEnableBankingService = (config: BankProviderConfig) => {
       let continuation: string | undefined
       for (;;) {
         const query = new URLSearchParams()
+        query.set("transaction_status", "BOOK")
         if (since !== undefined) {
           query.set("date_from", since)
         }
@@ -361,6 +381,72 @@ export const makeEnableBankingService = (config: BankProviderConfig) => {
       Effect.asVoid,
     )
 
+  const mapPayment = (raw: unknown): BankPayment | undefined => {
+    const record = asRecord(raw)
+    const paymentId = asString(record?.["payment_id"])
+    const status = asString(record?.["status"])
+    if (paymentId === undefined || status === undefined) {
+      return undefined
+    }
+    const rawUrl = record?.["url"]
+    const url = rawUrl === undefined ? undefined : parseHttpsUrl(rawUrl)
+    if (rawUrl !== undefined && url === undefined) {
+      return undefined
+    }
+    return { paymentId, status, ...(url === undefined ? {} : { url }) }
+  }
+
+  const requirePayment = (raw: unknown, action: string): Effect.Effect<BankPayment, ProviderUnavailable> => {
+    const mapped = mapPayment(raw)
+    if (mapped === undefined) {
+      return Effect.fail(new ProviderUnavailable({ message: `Enable Banking ${action} returned no payment` }))
+    }
+    return Effect.succeed(mapped)
+  }
+
+  const createPayment = (
+    input: CreateBankPaymentInput,
+  ): Effect.Effect<BankPayment, ProviderUnavailable> =>
+    request("POST", "/payments", {
+      psu: true,
+      body: {
+        aspsp: { name: input.aspsp.name, country: input.aspsp.country },
+        redirect_url: input.redirectUrl,
+        state: input.state,
+        payment_type: input.paymentType,
+        payment_request: {
+          credit_transfer_transaction: [
+            {
+              beneficiary: {
+                creditor: { name: input.creditorName },
+                creditor_account: { identification: input.creditorIban, scheme_name: "IBAN" },
+              },
+              instructed_amount: {
+                amount: toMajor(input.amountMinor, input.currency),
+                currency: input.currency,
+              },
+              ...(input.remittance === undefined
+                ? {}
+                : { remittance_information: [input.remittance] }),
+            },
+          ],
+        },
+      },
+    }).pipe(Effect.flatMap((raw) => requirePayment(raw, "createPayment")))
+
+  const getPayment = (paymentId: string): Effect.Effect<BankPayment, ProviderUnavailable> =>
+    request("GET", `/payments/${encodeURIComponent(paymentId)}`).pipe(
+      Effect.flatMap((raw) => requirePayment(raw, "getPayment")),
+    )
+
+  const submitPayment = (paymentId: string): Effect.Effect<BankPayment, ProviderUnavailable> =>
+    request("POST", `/payments/${encodeURIComponent(paymentId)}/submit`, { psu: true }).pipe(
+      Effect.flatMap((raw) => requirePayment(raw, "submitPayment")),
+    )
+
+  const deletePayment = (paymentId: string): Effect.Effect<void, ProviderUnavailable> =>
+    request("DELETE", `/payments/${encodeURIComponent(paymentId)}`, { parseJson: false }).pipe(Effect.asVoid)
+
   return BankProvider.of({
     listAspsps,
     startAuthorization,
@@ -368,18 +454,37 @@ export const makeEnableBankingService = (config: BankProviderConfig) => {
     listAccounts,
     listTransactions,
     deleteSession,
+    createPayment,
+    getPayment,
+    submitPayment,
+    deletePayment,
   })
 }
 
-export const EnableBankingLive: Layer.Layer<BankProvider, never, AppConfig> = Layer.effect(
+export const EnableBankingLive: Layer.Layer<BankProvider, ValidationFailed, AppConfig> = Layer.effect(
   BankProvider,
-  Effect.map(AppConfigTag, (config) =>
-    makeEnableBankingService({
+  Effect.gen(function* () {
+    const config = yield* AppConfigTag
+    if (config.enableBankingApplicationId.trim() === "") {
+      return yield* new ValidationFailed({
+        issues: [
+          "Enable Banking applicationId is empty (config.enableBankingApplicationId). Set bank.application_id in finch.toml or ENABLEBANKING_APPLICATION_ID env.",
+        ],
+      })
+    }
+    if (config.enableBankingPrivateKey.trim() === "") {
+      return yield* new ValidationFailed({
+        issues: [
+          "Enable Banking privateKeyPem is empty (config.enableBankingPrivateKey). Set ENABLEBANKING_PRIVATE_KEY env or keyring service=finch name=ENABLEBANKING_PRIVATE_KEY.",
+        ],
+      })
+    }
+    return makeEnableBankingService({
       baseUrl: config.enableBankingBaseUrl,
       applicationId: config.enableBankingApplicationId,
       privateKeyPem: config.enableBankingPrivateKey,
       psuIp: config.enableBankingPsuIp,
       psuUserAgent: config.enableBankingPsuUserAgent,
-    }),
-  ),
+    })
+  }),
 )

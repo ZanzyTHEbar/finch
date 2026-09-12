@@ -4,6 +4,7 @@ import {
   LexicalIndex,
   ValidationFailed,
   VectorIndex,
+  type AppConfig,
   type EmbeddingDimsMismatch,
   type EmbeddingError,
   type LexicalIndexError,
@@ -14,6 +15,10 @@ import {
 import { reciprocalRankFusion } from "./fusion.ts"
 import { parseDocumentId } from "./document-id.ts"
 import { SearchDocumentRepository } from "@finch/db"
+import { Reranker } from "./rerank.ts"
+import { AppConfigTag } from "@finch/core"
+
+export { formatDocumentId, parseDocumentId, type ParsedDocumentId } from "./document-id.ts"
 
 export interface HybridSearchInput {
   readonly tenantId: TenantId
@@ -75,7 +80,7 @@ export class HybridSearch extends Context.Tag("HybridSearch")<
 export const HybridSearchLive: Layer.Layer<
   HybridSearch,
   never,
-  EmbeddingProvider | VectorIndex | LexicalIndex | SearchDocumentRepository
+  EmbeddingProvider | VectorIndex | LexicalIndex | SearchDocumentRepository | AppConfig | Reranker
 > = Layer.effect(
   HybridSearch,
   Effect.gen(function* () {
@@ -83,6 +88,8 @@ export const HybridSearchLive: Layer.Layer<
     const vectors = yield* VectorIndex
     const lexical = yield* LexicalIndex
     const docs = yield* SearchDocumentRepository
+    const config = yield* AppConfigTag
+    const reranker = yield* Reranker
 
     const hybridSearch = (
       input: HybridSearchInput,
@@ -170,8 +177,19 @@ export const HybridSearchLive: Layer.Layer<
           })
         }
 
+        const reranked = config.enableReranker
+          ? yield* reranker.rerank(input.text, hits, (docId) =>
+              Effect.gen(function* () {
+                const parsed = parseDocumentId(docId)
+                if (parsed === null) return docId
+                const row = yield* docs.findBySource(input.tenantId, parsed.sourceType, parsed.sourceId).pipe(Effect.catchAll(() => Effect.succeed(null)))
+                return row?.content ?? docId
+              }),
+            )
+          : hits
+
         return {
-          hits,
+          hits: reranked,
           diagnostics: {
             denseCandidates: denseHits.length,
             lexicalCandidates: lexicalHits.length,

@@ -1,0 +1,20 @@
+CREATE TABLE `payments` (
+	`payment_id` text PRIMARY KEY NOT NULL,
+	`tenant_id` text NOT NULL,
+	`status` text NOT NULL,
+	`url` text,
+	`aspsp_name` text NOT NULL,
+	`aspsp_country` text NOT NULL,
+	`amount_minor` integer NOT NULL,
+	`currency` text NOT NULL,
+	`creditor_name` text NOT NULL,
+	`creditor_iban` text NOT NULL,
+	`payment_type` text NOT NULL,
+	`remittance` text,
+	`state` text NOT NULL,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL,
+	FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`id`) ON UPDATE no action ON DELETE cascade,
+	CHECK("payments"."amount_minor" > 0),
+	CHECK(length("payments"."currency") = 3)
+);

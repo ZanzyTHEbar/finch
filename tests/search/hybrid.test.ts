@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { Effect, Layer, Schema } from "effect";
 import { describe, expect, it } from "vitest";
+import { AppConfigTag } from "../../packages/core/src/config/config.ts";
 import { TenantId } from "../../packages/core/src/domain/tenant.ts";
 import type { TenantId as TenantIdT } from "../../packages/core/src/domain/tenant.ts";
 import { nowInstant } from "../../packages/core/src/domain/time.ts";
@@ -8,6 +9,7 @@ import { EmbeddingProvider } from "../../packages/core/src/ports/embedding-provi
 import { VectorIndex } from "../../packages/core/src/ports/vector-index.ts";
 import { LexicalIndex } from "../../packages/core/src/ports/lexical-index.ts";
 import { HybridSearch, HybridSearchLive } from "../../packages/search/src/hybrid.ts";
+import { NoopRerankerLive } from "../../packages/search/src/rerank.ts";
 import { Db } from "../../packages/db/src/client.ts";
 import { VectorIndexLive } from "../../packages/db/src/vector-index.ts";
 import { LexicalIndexLive } from "../../packages/db/src/lexical/lexical-index.ts";
@@ -50,15 +52,35 @@ const makeLayers = (sqlite: Database) => {
       embedQuery: () => Effect.succeed({ model: MODEL, dims: DIMS, vector: queryVector() }),
     }),
   );
+  const testConfig = Layer.succeed(AppConfigTag, {
+    databaseUrl: "file::memory:",
+    sqliteVecPath: "",
+    voyageApiKey: "",
+    voyageModel: MODEL,
+    llmAdapter: "opencode",
+    openCodeApiKey: "",
+    openCodeLlmBaseUrl: "https://opencode.ai/zen/v1",
+    openCodeLlmModel: "opencode/claude-sonnet-4-20250514",
+    bankAdapter: "enablebanking",
+    enableBankingBaseUrl: "https://api.enablebanking.com",
+    enableBankingApplicationId: "",
+    enableBankingPrivateKey: "",
+    enableBankingPsuIp: "203.0.113.10",
+    enableBankingPsuUserAgent: "finch-test",
+    enableDistillation: false,
+    enableReranker: false,
+    enableSummaries: false,
+    enableEmbeddings: false,
+  });
   const indexes = Layer.mergeAll(
     Layer.provide(VectorIndexLive, base),
     Layer.provide(LexicalIndexLive, base),
   );
   const hybrid = Layer.provide(
     HybridSearchLive,
-    Layer.mergeAll(base, indexes, cannedEmbeddings),
+    Layer.mergeAll(base, indexes, cannedEmbeddings, NoopRerankerLive, testConfig),
   );
-  return Layer.mergeAll(base, indexes, cannedEmbeddings, hybrid);
+  return Layer.mergeAll(base, indexes, cannedEmbeddings, testConfig, hybrid);
 };
 
 const seedTenantRow = (tid: TenantIdT) =>

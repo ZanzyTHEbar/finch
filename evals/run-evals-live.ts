@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite"
 import { Effect, Layer, Schema } from "effect"
-import { loadVoyageApiKey } from "../packages/core/src/config/config.ts"
+import { AppConfigTag, loadVoyageApiKey } from "../packages/core/src/config/config.ts"
 import { TenantId } from "../packages/core/src/domain/tenant.ts"
 import type { TenantId as TenantIdT } from "../packages/core/src/domain/tenant.ts"
 import { nowInstant } from "../packages/core/src/domain/time.ts"
@@ -14,6 +14,7 @@ import { VectorIndexLive } from "../packages/db/src/vector-index.ts"
 import { parseDocumentId } from "../packages/search/src/document-id.ts"
 import { evaluateRun } from "../packages/search/src/eval-metrics.ts"
 import { HybridSearch, HybridSearchLive } from "../packages/search/src/hybrid.ts"
+import { NoopRerankerLive } from "../packages/search/src/rerank.ts"
 import { makeVoyageEmbeddingService } from "../packages/search/src/voyage-embeddings.ts"
 import { makeTestLayers, runTest } from "../tests/setup.ts"
 import { EVAL_CORPUS, EVAL_DIMS, EVAL_MODEL, EVAL_TENANT } from "./corpus.ts"
@@ -96,11 +97,32 @@ const runGolden = async (apiKey: string): Promise<void> => {
       Layer.provide(VectorIndexLive, base),
       Layer.provide(LexicalIndexLive, base),
     )
+    const testConfig = Layer.succeed(AppConfigTag, {
+      databaseUrl: "file::memory:",
+      sqliteVecPath: "",
+      voyageApiKey: apiKey,
+      voyageModel: EVAL_MODEL,
+      llmAdapter: "opencode",
+      openCodeApiKey: "",
+      openCodeLlmBaseUrl: "https://opencode.ai/zen/v1",
+      openCodeLlmModel: "opencode/claude-sonnet-4-20250514",
+      bankAdapter: "enablebanking",
+      enableBankingBaseUrl: "https://api.enablebanking.com",
+      enableBankingApplicationId: "",
+      enableBankingPrivateKey: "",
+      enableBankingPsuIp: "203.0.113.10",
+      enableBankingPsuUserAgent: "finch-test",
+      enableDistillation: false,
+      enableReranker: false,
+      enableSummaries: false,
+      enableEmbeddings: false,
+    })
     const layers = Layer.mergeAll(
       base,
       indexes,
       embeddings,
-      Layer.provide(HybridSearchLive, Layer.mergeAll(base, indexes, embeddings)),
+      testConfig,
+      Layer.provide(HybridSearchLive, Layer.mergeAll(base, indexes, embeddings, NoopRerankerLive, testConfig)),
     )
     const tenantId: TenantIdT = Schema.decodeUnknownSync(TenantId)(EVAL_TENANT)
 

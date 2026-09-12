@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package finch.v1;
+
+import "finch/v1/common.proto";
+
+service BankService {
+  rpc ListAspsps(ListAspspsRequest) returns (ListAspspsResponse);
+  rpc StartAuthorization(StartAuthorizationRequest) returns (StartAuthorizationResponse);
+  rpc ListConnections(ListConnectionsRequest) returns (ListConnectionsResponse);
+  rpc GetConnectionStatus(GetConnectionStatusRequest) returns (GetConnectionStatusResponse);
+  rpc QueueSync(QueueSyncRequest) returns (QueueSyncResponse);
+  rpc Disconnect(DisconnectRequest) returns (DisconnectResponse);
+}
+
+enum BankConnectionStatus {
+  BANK_CONNECTION_STATUS_UNSPECIFIED = 0;
+  BANK_CONNECTION_STATUS_PENDING = 1;
+  BANK_CONNECTION_STATUS_ACTIVE = 2;
+  BANK_CONNECTION_STATUS_EXPIRED = 3;
+  BANK_CONNECTION_STATUS_DISCONNECTED = 4;
+  BANK_CONNECTION_STATUS_FAILED = 5;
+}
+
+message Aspsp {
+  string id = 1;
+  string name = 2;
+  string country = 3;
+  string logo_url = 4;
+}
+
+message BankConnection {
+  string id = 1;
+  Aspsp aspsp = 2;
+  BankConnectionStatus status = 3;
+  // RFC 3339 timestamp.
+  string last_synced_at = 4;
+}
+
+message ListAspspsRequest {
+  string country = 1;
+  PageRequest page = 2;
+}
+
+message ListAspspsResponse {
+  repeated Aspsp aspsps = 1;
+  PageResponse page = 2;
+}
+
+message StartAuthorizationRequest {
+  // Requested scope; lib authorizes membership using adapter-derived context.
+  string workspace_id = 1;
+  string aspsp_id = 2;
+  // Relative post-provider route. Lib validates it against the registered
+  // client origin before starting authorization.
+  string return_path = 3;
+}
+
+message StartAuthorizationResponse {
+  string authorization_url = 1;
+  BankConnection connection = 2;
+}
+
+message ListConnectionsRequest {
+  string workspace_id = 1;
+  PageRequest page = 2;
+}
+
+message ListConnectionsResponse {
+  repeated BankConnection connections = 1;
+  PageResponse page = 2;
+}
+
+message GetConnectionStatusRequest {
+  string workspace_id = 1;
+  string connection_id = 2;
+}
+
+message GetConnectionStatusResponse {
+  BankConnection connection = 1;
+}
+
+message QueueSyncRequest {
+  string workspace_id = 1;
+  string connection_id = 2;
+  // RFC 3339 timestamp. Omitted to use the connection's sync cursor.
+  optional string since = 3;
+  // Required non-empty opaque client key. Replays atomically return the
+  // original job and never enqueue a duplicate sync.
+  string idempotency_key = 4;
+}
+
+message QueueSyncResponse {
+  Job job = 1;
+}
+
+message DisconnectRequest {
+  string workspace_id = 1;
+  string connection_id = 2;
+}
+
+message DisconnectResponse {
+  bool disconnected = 1;
+  BankConnectionStatus status = 2;
+}

@@ -4,7 +4,14 @@ import { TenantId } from "../tenant.ts"
 import { UtcInstant } from "../time.ts"
 import { encodeJson } from "./codec.ts"
 
-export const AggregateType = Schema.Literal("account", "transaction", "receipt", "reconciliation", "summary")
+export const AggregateType = Schema.Literal(
+  "account",
+  "transaction",
+  "receipt",
+  "reconciliation",
+  "summary",
+  "payment",
+)
 
 export type AggregateType = Schema.Schema.Type<typeof AggregateType>
 

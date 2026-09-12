@@ -1,0 +1,12 @@
+{
+  "name": "@finch/lib",
+  "exports": {
+    ".": "./src/index.ts",
+    "./legacy": "./src/legacy.ts"
+  },
+  "dependencies": {
+    "@finch/core": "workspace:*",
+    "@finch/db": "workspace:*",
+    "effect": "3.22.1"
+  }
+}

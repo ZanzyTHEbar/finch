@@ -120,6 +120,65 @@ export const SummaryGeneratedV1 = Schema.Struct({
   contentHash: Schema.String,
 })
 
+export const PaymentCreatedV1 = Schema.Struct({
+  paymentId: Schema.String,
+  status: Schema.String,
+  url: Schema.optional(Schema.String),
+  aspspName: Schema.String,
+  aspspCountry: Schema.String,
+  amountMinor: AmountMinor,
+  currency: CurrencyCode,
+  creditorName: Schema.String,
+  creditorIban: Schema.String,
+  paymentType: Schema.String,
+  remittance: Schema.optional(Schema.String),
+  state: Schema.String,
+})
+
+export type PaymentCreatedV1 = Schema.Schema.Type<typeof PaymentCreatedV1>
+
+export const PaymentStatusChangedV1 = Schema.Struct({
+  paymentId: Schema.String,
+  status: Schema.String,
+  url: Schema.optional(Schema.String),
+})
+
+export type PaymentStatusChangedV1 = Schema.Schema.Type<typeof PaymentStatusChangedV1>
+
+export const PaymentDeletedV1 = Schema.Struct({
+  paymentId: Schema.String,
+})
+
+export type PaymentDeletedV1 = Schema.Schema.Type<typeof PaymentDeletedV1>
+
+export const BankConnectionCreatedV1 = Schema.Struct({
+  aspspName: Schema.optional(Schema.String),
+  aspspCountry: Schema.optional(Schema.String),
+  sessionId: Schema.String,
+})
+
+export type BankConnectionCreatedV1 = Schema.Schema.Type<typeof BankConnectionCreatedV1>
+
+export const BankConnectionRevokedV1 = Schema.Struct({
+  sessionId: Schema.String,
+  reason: Schema.optional(Schema.String),
+})
+
+export type BankConnectionRevokedV1 = Schema.Schema.Type<typeof BankConnectionRevokedV1>
+
+export const BankSyncStartedV1 = Schema.Struct({
+  jobId: Schema.String,
+})
+
+export type BankSyncStartedV1 = Schema.Schema.Type<typeof BankSyncStartedV1>
+
+export const BankSyncCompletedV1 = Schema.Struct({
+  jobId: Schema.String,
+  transactionsObserved: Schema.Number,
+})
+
+export type BankSyncCompletedV1 = Schema.Schema.Type<typeof BankSyncCompletedV1>
+
 export type SummaryGeneratedV1 = Schema.Schema.Type<typeof SummaryGeneratedV1>
 
 // Event-type name (bare payload name, version carried separately in the
@@ -139,6 +198,13 @@ export const EventCatalogV1: Record<string, Schema.Schema.Any> = {
   MatchConfirmed: MatchConfirmedV1,
   MatchRejected: MatchRejectedV1,
   SummaryGenerated: SummaryGeneratedV1,
+  PaymentCreated: PaymentCreatedV1,
+  PaymentStatusChanged: PaymentStatusChangedV1,
+  PaymentDeleted: PaymentDeletedV1,
+  BankConnectionCreated: BankConnectionCreatedV1,
+  BankConnectionRevoked: BankConnectionRevokedV1,
+  BankSyncStarted: BankSyncStartedV1,
+  BankSyncCompleted: BankSyncCompletedV1,
 }
 
 export type EventTypesV1 = keyof typeof EventCatalogV1

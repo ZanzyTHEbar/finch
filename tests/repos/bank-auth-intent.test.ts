@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { Effect, Schema } from "effect";
 import { describe, expect, it } from "vitest";
+import { TenantMismatch } from "../../packages/core/src/domain/errors.ts";
 import { TenantId } from "../../packages/core/src/domain/tenant.ts";
 import type { TenantId as TenantIdT } from "../../packages/core/src/domain/tenant.ts";
 import { nowInstant } from "../../packages/core/src/domain/time.ts";
@@ -40,20 +41,23 @@ describe("BankAuthIntentRepository", () => {
     }
   });
 
-  it("rejects cross-tenant reuse of the same state by overwriting the owner", async () => {
+  it("rejects cross-tenant reuse of the same state", async () => {
     const sqlite = new Database(":memory:");
     try {
-      const row = await runTest(
+      const result = await runTest(
         makeTestLayers(sqlite),
         Effect.gen(function* () {
           yield* seedTenant(TIDA);
           yield* seedTenant(TIDB);
           const intents = yield* BankAuthIntentRepository;
           yield* intents.put(TIDA, "state-1");
-          return yield* intents.put(TIDB, "state-1");
+          const rejected = yield* Effect.flip(intents.put(TIDB, "state-1"));
+          const owner = yield* intents.get("state-1");
+          return { rejected, owner };
         }),
       );
-      expect(row.tenantId).toBe(TIDB);
+      expect(result.rejected).toBeInstanceOf(TenantMismatch);
+      expect(result.owner?.tenantId).toBe(TIDA);
     } finally {
       sqlite.close();
     }

@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package finch.v1;
+
+import "finch/v1/bank.proto";
+import "finch/v1/payment.proto";
+
+// Adapter-only provider callback contract. ConnectRPC public-client and MCP
+// routes must not expose this service. State is generated, stored, and
+// single-use by lib; it resolves the workspace server-side. The callback
+// adapter verifies provider signatures and messages before accepting a payment
+// outcome or provider reference.
+service ProviderCallbackService {
+  rpc CompleteBankAuthorization(CompleteBankAuthorizationRequest) returns (CompleteBankAuthorizationResponse);
+  rpc CompletePaymentAuthorization(CompletePaymentAuthorizationRequest) returns (CompletePaymentAuthorizationResponse);
+}
+
+enum PaymentProviderOutcome {
+  PAYMENT_PROVIDER_OUTCOME_UNSPECIFIED = 0;
+  PAYMENT_PROVIDER_OUTCOME_ACCEPTED = 1;
+  PAYMENT_PROVIDER_OUTCOME_REJECTED = 2;
+  PAYMENT_PROVIDER_OUTCOME_CANCELLED = 3;
+  PAYMENT_PROVIDER_OUTCOME_UNKNOWN = 4;
+}
+
+message CompleteBankAuthorizationRequest {
+  // Server-owned opaque, single-use state that resolves workspace scope.
+  string state = 1;
+  // Provider authorization code.
+  string code = 2;
+}
+
+message CompleteBankAuthorizationResponse {
+  BankConnection connection = 1;
+}
+
+message CompletePaymentAuthorizationRequest {
+  // Server-owned opaque, single-use state that resolves workspace scope.
+  string state = 1;
+  // Accepted only after callback-adapter provider signature/message verification.
+  PaymentProviderOutcome outcome = 2;
+  // Accepted only after callback-adapter provider signature/message verification.
+  string provider_reference = 3;
+}
+
+message CompletePaymentAuthorizationResponse {
+  Payment payment = 1;
+}

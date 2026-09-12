@@ -64,6 +64,20 @@
       "when": 1788886672249,
       "tag": "0008_famous_drax",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1788889000000,
+      "tag": "0009_payments",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1788954926242,
+      "tag": "0010_worthless_christian_walker",
+      "breakpoints": true
     }
   ]
 }

@@ -4,20 +4,34 @@
   "type": "module",
   "workspaces": ["packages/*"],
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "bun ./node_modules/vitest/vitest.mjs run",
-    "eval": "bun evals/run-evals.ts",
-    "eval:live": "bun evals/run-evals-live.ts"
+    "typecheck": "tsc --noEmit && bun run --workspaces typecheck",
+    "test": "bun run test:cloud",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "supabase:reset": "supabase db reset --local --no-seed",
+    "supabase:bootstrap": "node scripts/bootstrap-supabase.mjs",
+    "supabase:bootstrap:local": "FINCH_SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres bun run supabase:bootstrap",
+    "supabase:test": "supabase test db --local",
+    "test:cloud": "node scripts/run-cloud-tests.mjs",
+    "test:boundaries": "node scripts/check-lib-boundary.mjs",
+    "test:contracts": "bun run --filter @finch/contracts test",
+    "test:lib": "bun ./node_modules/vitest/vitest.mjs run --config vitest.config.ts tests/lib",
+    "test:edge": "bun ./node_modules/vitest/vitest.mjs run --config vitest.config.ts tests/supabase/enable-banking-edge.test.ts tests/supabase/bank-callback-activation-cleanup.test.ts tests/supabase/bank-callback-activation-guard.test.ts tests/supabase/bank-callback-payment-outcome.test.ts",
+    "test:client": "bun ./node_modules/vitest/vitest.mjs run --config vitest.targeted.config.ts tests/client",
+    "test:mcp": "bun ./node_modules/vitest/vitest.mjs run --config vitest.targeted.config.ts tests/mcp",
+    "test:connect": "bun ./node_modules/vitest/vitest.mjs run --config vitest.targeted.config.ts tests/connect",
+    "test:enablebanking": "bun ./node_modules/vitest/vitest.mjs run --config vitest.targeted.config.ts tests/enablebanking",
+    "verify": "bun run typecheck && bun run test:contracts && bun run test:boundaries && bun run test:lib && bun run test:edge && bun run test:client && bun run test:mcp && bun run test:connect && bun run test:enablebanking && bun run supabase:reset && bun run supabase:bootstrap:local && bun run supabase:test && bun run test:cloud"
   },
   "devDependencies": {
-    "@types/bun": "1.4.1",
-    "@types/node": "^22.10.2",
-    "drizzle-kit": "^0.31.8",
-    "drizzle-orm": "0.45.2",
-    "effect": "3.22.1",
-    "fast-check": "^4.1.1",
-    "jose": "6.2.12",
-    "typescript": "^5.9.3",
-    "vitest": "^3.2.4"
+    "@supabase/supabase-js": "2.116.0",
+    "@types/node": "22.10.2",
+    "pg": "8.23.0",
+    "supabase": "2.117.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  },
+  "dependencies": {
+    "jose": "6.2.12"
   }
 }

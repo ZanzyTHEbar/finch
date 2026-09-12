@@ -6,9 +6,16 @@
   "exports": {
     ".": "./src/fusion.ts",
     "./hybrid": "./src/hybrid.ts",
+    "./document-id": "./src/document-id.ts",
     "./voyage": "./src/voyage-embeddings.ts",
     "./embed-worker": "./src/embed-worker.ts",
-    "./content-hash": "./src/content-hash.ts"
+    "./content-hash": "./src/content-hash.ts",
+    "./distill": "./src/distill.ts",
+    "./rerank": "./src/rerank.ts",
+    "./burst": "./src/burst.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@finch/core": "workspace:*",

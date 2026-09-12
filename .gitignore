@@ -37,3 +37,12 @@ data/
 *.db-wal
 
 .opencode/
+
+.codebase-memory/
+.unlazy/
+GATES-hardening.md
+GATES-reconcile.md
+GATES.md
+
+packages/lib-legacy/*
+packages/reconciliation/*

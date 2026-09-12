@@ -3,9 +3,16 @@ import {
   AccountDiscoveredV1,
   AccountRevokedV1,
   AccountUpdatedV1,
+  BankConnectionCreatedV1,
+  BankConnectionRevokedV1,
+  BankSyncCompletedV1,
+  BankSyncStartedV1,
   MatchConfirmedV1,
   MatchProposedV1,
   MatchRejectedV1,
+  PaymentCreatedV1,
+  PaymentDeletedV1,
+  PaymentStatusChangedV1,
   ReceiptCapturedV1,
   ReceiptMatchedV1,
   StorageUnavailable,
@@ -21,6 +28,7 @@ import {
 } from "@finch/core";
 import type {
   AccountNotFound,
+  PaymentNotFound,
   ReceiptNotFound,
   ReconciliationConflict,
   TenantId,
@@ -30,7 +38,9 @@ import type {
 import { Db } from "../client.ts";
 import { EventStore, type EventRecord } from "../event-store.ts";
 import { AccountRepository } from "../repositories/account.ts";
+import { BankSessionRepository } from "../repositories/bank-session.ts";
 import { EventReadRepository } from "../repositories/event.ts";
+import { PaymentRepository } from "../repositories/payment.ts";
 import { ReceiptRepository } from "../repositories/receipt.ts";
 import { ReconciliationRepository, type ReconciliationRow } from "../repositories/reconciliation.ts";
 import { SearchDocumentRepository } from "../repositories/search-document.ts";
@@ -42,6 +52,18 @@ import { tenants } from "../schema/index.ts";
 import { receiptCanonical, summaryCanonical, transactionCanonical } from "./search-documents.ts";
 import { summaryContentKey } from "./summaries.ts";
 
+const extractSummaryText = (content: unknown): string => {
+  if (typeof content === "string") return content;
+  if (typeof content === "object" && content !== null) {
+    const obj = content as Record<string, unknown>;
+    for (const key of ["text", "summary", "content", "description"]) {
+      if (typeof obj[key] === "string") return obj[key];
+    }
+    return JSON.stringify(content);
+  }
+  return "";
+};
+
 export type ProjectError =
   | UnknownEventVersion
   | ValidationFailed
@@ -49,6 +71,7 @@ export type ProjectError =
   | AccountNotFound
   | TransactionNotFound
   | ReceiptNotFound
+  | PaymentNotFound
   | ReconciliationConflict
   | TenantMismatch;
 
@@ -85,8 +108,10 @@ export const ProjectionRunnerLive: Layer.Layer<
   | EventStore
   | EventReadRepository
   | AccountRepository
+  | BankSessionRepository
   | TransactionRepository
   | ReceiptRepository
+  | PaymentRepository
   | SearchDocumentRepository
   | SummaryRepository
   | ReconciliationRepository
@@ -98,8 +123,10 @@ export const ProjectionRunnerLive: Layer.Layer<
     const eventStore = yield* EventStore;
     const eventReads = yield* EventReadRepository;
     const accounts = yield* AccountRepository;
+    const bankSessions = yield* BankSessionRepository;
     const txs = yield* TransactionRepository;
     const receiptsRepo = yield* ReceiptRepository;
+    const paymentsRepo = yield* PaymentRepository;
     const docs = yield* SearchDocumentRepository;
     const summariesRepo = yield* SummaryRepository;
     const recons = yield* ReconciliationRepository;
@@ -188,6 +215,24 @@ export const ProjectionRunnerLive: Layer.Layer<
         // Unknown event versions halt loudly instead of silently skipping.
         const payload = yield* upcastPayload(event.eventType, event.eventVersion, event.payload);
         switch (event.eventType) {
+          case "BankConnectionCreated": {
+            const p = yield* decodePayload(BankConnectionCreatedV1, event.eventType, payload);
+            yield* bankSessions.upsert(tenantId, p.sessionId, "active");
+            break;
+          }
+          case "BankConnectionRevoked": {
+            const p = yield* decodePayload(BankConnectionRevokedV1, event.eventType, payload);
+            yield* bankSessions.updateStatus(tenantId, "revoked");
+            break;
+          }
+          case "BankSyncStarted": {
+            yield* decodePayload(BankSyncStartedV1, event.eventType, payload);
+            break;
+          }
+          case "BankSyncCompleted": {
+            yield* decodePayload(BankSyncCompletedV1, event.eventType, payload);
+            break;
+          }
           case "AccountDiscovered": {
             const p = yield* decodePayload(AccountDiscoveredV1, event.eventType, payload);
             yield* accounts.upsertFromDiscovery(tenantId, {
@@ -325,6 +370,34 @@ export const ProjectionRunnerLive: Layer.Layer<
             );
             break;
           }
+          case "PaymentCreated": {
+            const p = yield* decodePayload(PaymentCreatedV1, event.eventType, payload);
+            yield* paymentsRepo.put(tenantId, {
+              paymentId: p.paymentId,
+              status: p.status,
+              url: p.url ?? null,
+              aspspName: p.aspspName,
+              aspspCountry: p.aspspCountry,
+              amountMinor: p.amountMinor,
+              currency: p.currency,
+              creditorName: p.creditorName,
+              creditorIban: p.creditorIban,
+              paymentType: p.paymentType,
+              remittance: p.remittance ?? null,
+              state: p.state,
+            });
+            break;
+          }
+          case "PaymentStatusChanged": {
+            const p = yield* decodePayload(PaymentStatusChangedV1, event.eventType, payload);
+            yield* paymentsRepo.updateStatus(tenantId, p.paymentId, p.status, p.url);
+            break;
+          }
+          case "PaymentDeleted": {
+            const p = yield* decodePayload(PaymentDeletedV1, event.eventType, payload);
+            yield* paymentsRepo.remove(tenantId, p.paymentId);
+            break;
+          }
           case "SummaryGenerated": {
             const p = yield* decodePayload(SummaryGeneratedV1, event.eventType, payload);
             const key = summaryContentKey(p);
@@ -335,11 +408,16 @@ export const ProjectionRunnerLive: Layer.Layer<
               key.content,
               event.metadata.recordedAt,
             );
+            const summary = yield* summariesRepo.get(tenantId, key.periodType, key.period);
+            const contentText =
+              summary?.content !== undefined && summary?.content !== null
+                ? extractSummaryText(summary.content)
+                : `summary ${key.periodType} ${key.period}`;
             yield* docs.upsert(
               tenantId,
               "summary",
               aggregateId,
-              summaryCanonical(key.periodType, key.period, p.contentHash),
+              summaryCanonical(key.periodType, key.period, contentText),
             );
             yield* enqueueEmbed(tenantId, "summary", aggregateId);
             break;

@@ -7,11 +7,16 @@
     ".": "./src/index.ts",
     "./jwt": "./src/jwt.ts",
     "./client": "./src/client.ts",
-    "./ingest": "./src/ingest.ts"
+    "./ingest": "./src/ingest.ts",
+    "./payments": "./src/payments.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@finch/core": "workspace:*",
     "@finch/db": "workspace:*",
+    "@finch/lib": "workspace:*",
     "effect": "3.22.1",
     "jose": "6.2.12"
   }

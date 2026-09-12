@@ -1,0 +1,25 @@
+{
+  "name": "@finch/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./agent": "./src/agent.ts",
+    "./callback": "./src/gen/finch/v1/callback_pb.ts"
+  },
+  "scripts": {
+    "generate": "buf generate",
+    "generate:check": "buf generate && git -C ../.. diff --exit-code -- packages/contracts/src/gen",
+    "test": "bun run generate:check && vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.14.1"
+  },
+  "devDependencies": {
+    "@bufbuild/protoc-gen-es": "2.14.1",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}

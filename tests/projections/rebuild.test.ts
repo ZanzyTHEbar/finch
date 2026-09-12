@@ -6,6 +6,7 @@ import { Db } from "../../packages/db/src/client.ts";
 import { EventStore, type AppendInput } from "../../packages/db/src/event-store.ts";
 import { ProjectionRunner } from "../../packages/db/src/projections/runner.ts";
 import { EventReadRepository } from "../../packages/db/src/repositories/event.ts";
+import { BankSessionRepository } from "../../packages/db/src/repositories/bank-session.ts";
 import { ReconciliationRepository } from "../../packages/db/src/repositories/reconciliation.ts";
 import { ReceiptRepository } from "../../packages/db/src/repositories/receipt.ts";
 import { SearchDocumentRepository } from "../../packages/db/src/repositories/search-document.ts";
@@ -232,6 +233,67 @@ const searchDocumentsFts = sqliteTable("search_documents_fts", {
 });
 
 describe("projection rebuild", () => {
+  it("replays bank lifecycle events into the session projection", async () => {
+    const sqlite = new Database(":memory:");
+    try {
+      const layer = makeTestLayers(sqlite);
+      const result = await runTest(
+        layer,
+        Effect.gen(function* () {
+          const store = yield* EventStore;
+          const runner = yield* ProjectionRunner;
+          const sessions = yield* BankSessionRepository;
+          yield* seedTenantRow(TID);
+          for (const input of [
+            {
+              tenantId: TID,
+              aggregateType: "account" as const,
+              aggregateId: "session-1",
+              eventType: "BankConnectionCreated",
+              payload: { sessionId: "session-1", aspspName: "Demo Bank", aspspCountry: "FI" },
+              actor: "test",
+            },
+            {
+              tenantId: TID,
+              aggregateType: "account" as const,
+              aggregateId: "sync-TID",
+              eventType: "BankSyncStarted",
+              payload: { jobId: "job-1" },
+              actor: "test",
+            },
+            {
+              tenantId: TID,
+              aggregateType: "account" as const,
+              aggregateId: "sync-TID",
+              eventType: "BankSyncCompleted",
+              payload: { jobId: "job-1", transactionsObserved: 4 },
+              actor: "test",
+            },
+            {
+              tenantId: TID,
+              aggregateType: "account" as const,
+              aggregateId: "session-1",
+              eventType: "BankConnectionRevoked",
+              payload: { sessionId: "session-1", reason: "test" },
+              actor: "test",
+            },
+          ] satisfies ReadonlyArray<AppendInput>) {
+            yield* store.append(input).pipe(Effect.flatMap(runner.project));
+          }
+          const projected = yield* sessions.get(TID);
+          yield* runner.rebuild({ tenantId: TID });
+          const rebuilt = yield* sessions.get(TID);
+          return { projected, rebuilt };
+        }),
+      );
+      expect(result.projected?.sessionId).toBe("session-1");
+      expect(result.projected?.status).toBe("revoked");
+      expect(result.rebuilt).toMatchObject({ sessionId: "session-1", status: "revoked" });
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it("incremental projection is identical to a full rebuild", async () => {
     const sqlite = new Database(":memory:");
     try {

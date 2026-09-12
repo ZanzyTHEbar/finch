@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
-import { StorageUnavailable, nowInstant, type TenantId } from "@finch/core";
+import { StorageUnavailable, TenantMismatch, nowInstant, type TenantId } from "@finch/core";
 import { Db } from "../client.ts";
 import { bankAuthIntents } from "../schema/index.ts";
 
@@ -12,7 +12,7 @@ export class BankAuthIntentRepository extends Context.Tag("BankAuthIntentReposit
     readonly put: (
       tenantId: TenantId,
       state: string,
-    ) => Effect.Effect<BankAuthIntentRow, StorageUnavailable>;
+    ) => Effect.Effect<BankAuthIntentRow, StorageUnavailable | TenantMismatch>;
     readonly get: (
       state: string,
     ) => Effect.Effect<BankAuthIntentRow | null, StorageUnavailable>;
@@ -26,11 +26,25 @@ export const BankAuthIntentRepositoryLive: Layer.Layer<BankAuthIntentRepository,
     Effect.gen(function* () {
       const { db } = yield* Db;
 
+      const get = (state: string): Effect.Effect<BankAuthIntentRow | null, StorageUnavailable> =>
+        Effect.map(
+          Effect.try({
+            try: () =>
+              db.select().from(bankAuthIntents).where(eq(bankAuthIntents.state, state)).get(),
+            catch: (cause) => new StorageUnavailable({ cause }),
+          }),
+          (row) => row ?? null,
+        );
+
       const put = (
         tenantId: TenantId,
         state: string,
-      ): Effect.Effect<BankAuthIntentRow, StorageUnavailable> =>
+      ): Effect.Effect<BankAuthIntentRow, StorageUnavailable | TenantMismatch> =>
         Effect.gen(function* () {
+          const existing = yield* get(state);
+          if (existing !== null && existing.tenantId !== tenantId) {
+            return yield* new TenantMismatch();
+          }
           const row = yield* Effect.try({
             try: () =>
               db
@@ -38,7 +52,7 @@ export const BankAuthIntentRepositoryLive: Layer.Layer<BankAuthIntentRepository,
                 .values({ state, tenantId, createdAt: nowInstant() })
                 .onConflictDoUpdate({
                   target: bankAuthIntents.state,
-                  set: { tenantId, createdAt: nowInstant() },
+                  set: { createdAt: nowInstant() },
                 })
                 .returning()
                 .get(),
@@ -49,18 +63,11 @@ export const BankAuthIntentRepositoryLive: Layer.Layer<BankAuthIntentRepository,
               cause: "bank_auth_intents put returned no row",
             });
           }
+          if (row.tenantId !== tenantId) {
+            return yield* new TenantMismatch();
+          }
           return row;
         });
-
-      const get = (state: string): Effect.Effect<BankAuthIntentRow | null, StorageUnavailable> =>
-        Effect.map(
-          Effect.try({
-            try: () =>
-              db.select().from(bankAuthIntents).where(eq(bankAuthIntents.state, state)).get(),
-            catch: (cause) => new StorageUnavailable({ cause }),
-          }),
-          (row) => row ?? null,
-        );
 
       const remove = (state: string): Effect.Effect<boolean, StorageUnavailable> =>
         Effect.map(

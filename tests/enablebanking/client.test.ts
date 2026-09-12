@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
 import type { AddressInfo } from "node:net"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { exportPKCS8, generateKeyPair } from "jose"
+import { AmountMinor, CurrencyCode } from "../../packages/core/src/domain/money.ts"
 import { ProviderUnavailable } from "../../packages/core/src/ports/bank-provider.ts"
 import { makeEnableBankingService } from "../../packages/enablebanking/src/client.ts"
 
@@ -22,6 +23,10 @@ describe("EnableBanking client", () => {
   let baseUrl = ""
   let privateKeyPem = ""
   let statusOverride: number | null = null
+  let hasAspspsOverride = false
+  let aspspsOverride: unknown
+  let hasProviderUrlOverride = false
+  let providerUrlOverride: unknown
   const captured: Array<{
     method: string
     pathname: string
@@ -58,10 +63,12 @@ describe("EnableBanking client", () => {
         let status = 404
         if (method === "GET" && pathname === "/aspsps") {
           status = 200
-          payload = { aspsps: [{ name: "Demo Bank", country: "FI" }] }
+          payload = {
+            aspsps: hasAspspsOverride ? aspspsOverride : [{ name: "Demo Bank", country: "FI" }],
+          }
         } else if (method === "POST" && pathname === "/auth") {
           status = 200
-          payload = { url: "https://bank.example/authorize" }
+          payload = { url: hasProviderUrlOverride ? providerUrlOverride : "https://bank.example/authorize" }
         } else if (method === "POST" && pathname === "/sessions") {
           status = 200
           payload = {
@@ -126,6 +133,22 @@ describe("EnableBanking client", () => {
               ],
             }
           }
+        } else if (method === "POST" && pathname === "/payments") {
+          status = 200
+          payload = {
+            payment_id: "pay-1",
+            status: "PDNG",
+            url: hasProviderUrlOverride ? providerUrlOverride : "https://bank.example/pay",
+          }
+        } else if (method === "GET" && pathname === "/payments/pay-1") {
+          status = 200
+          payload = { payment_id: "pay-1", status: "ACCC" }
+        } else if (method === "POST" && pathname === "/payments/pay-1/submit") {
+          status = 200
+          payload = { payment_id: "pay-1", status: "ACCC" }
+        } else if (method === "DELETE" && pathname === "/payments/pay-1") {
+          status = 200
+          payload = { payment_id: "pay-1", status: "CANC" }
         } else if (method === "DELETE" && pathname === "/sessions/sess-1") {
           status = 204
           res.writeHead(status)
@@ -164,6 +187,7 @@ describe("EnableBanking client", () => {
     const aspsps = await Effect.runPromise(bank.listAspsps())
     expect(aspsps).toEqual([{ name: "Demo Bank", country: "FI" }])
 
+    const authorizationStartedAt = Date.now()
     const auth = await Effect.runPromise(
       bank.startAuthorization({
         aspsp: { name: "Demo Bank", country: "FI" },
@@ -171,15 +195,24 @@ describe("EnableBanking client", () => {
         state: "s-1",
       }),
     )
+    const authorizationCompletedAt = Date.now()
     expect(auth.url).toBe("https://bank.example/authorize")
     const authReq = captured.find((row) => row.pathname === "/auth")
     expect(authReq?.psuIp).toBe("203.0.113.10")
     expect(authReq?.body).toEqual(
       expect.objectContaining({
+        access: expect.objectContaining({ valid_until: expect.any(String) }),
         aspsp: { name: "Demo Bank", country: "FI" },
         redirect_url: "https://finch.example/callback",
       }),
     )
+    const validUntil = (authReq?.body as { access?: { valid_until?: unknown } } | undefined)?.access?.valid_until
+    if (typeof validUntil !== "string") {
+      throw new Error("expected auth request to include valid_until")
+    }
+    const ninetyDays = 90 * 24 * 60 * 60 * 1000
+    expect(Date.parse(validUntil)).toBeGreaterThanOrEqual(authorizationStartedAt + ninetyDays)
+    expect(Date.parse(validUntil)).toBeLessThanOrEqual(authorizationCompletedAt + ninetyDays)
 
     const session = await Effect.runPromise(bank.createSession("auth-code"))
     expect(session.sessionId).toBe("sess-1")
@@ -196,6 +229,9 @@ describe("EnableBanking client", () => {
     ])
 
     const txs = await Effect.runPromise(bank.listTransactions("sess-1", "acc-1"))
+    const txReqs = captured.filter((row) => row.pathname === "/accounts/acc-1/transactions")
+    expect(txReqs.length).toBeGreaterThan(0)
+    expect(txReqs.every((row) => row.search.includes("transaction_status=BOOK"))).toBe(true)
     expect(txs).toHaveLength(2)
     expect(txs[0]?.externalTransactionId).toBe("tx-1")
     expect(txs[1]?.externalTransactionId).toBe("tx-2")
@@ -220,13 +256,135 @@ describe("EnableBanking client", () => {
       const failure = await Effect.runPromise(Effect.flip(service().listAspsps()))
       expect(failure._tag).toBe("ProviderUnavailable")
       expect(failure.message).toContain("401")
+      expect(failure.status).toBe(401)
     } finally {
       statusOverride = null
     }
   })
 
+  it("preserves a provider 404 for idempotent remote-deletion adapters", async () => {
+    statusOverride = 404
+    try {
+      const failure = await Effect.runPromise(Effect.flip(service().deleteSession("already-deleted")))
+      expect(failure._tag).toBe("ProviderUnavailable")
+      expect(failure.message).toBe("Enable Banking 404")
+      expect(failure.status).toBe(404)
+    } finally {
+      statusOverride = null
+    }
+  })
+
+  it("creates, reads, submits, and deletes a payment", async () => {
+    captured.length = 0
+    const bank = service()
+    const created = await Effect.runPromise(
+      bank.createPayment({
+        aspsp: { name: "Demo Bank", country: "FI" },
+        redirectUrl: "https://finch.example/pay",
+        state: "pay-state",
+        paymentType: "SEPA",
+        creditorName: "Acme",
+        creditorIban: "FI2112345600000785",
+        amountMinor: Schema.decodeUnknownSync(AmountMinor)(1500n),
+        currency: Schema.decodeUnknownSync(CurrencyCode)("EUR"),
+      }),
+    )
+    expect(created).toEqual({ paymentId: "pay-1", status: "PDNG", url: "https://bank.example/pay" })
+    const createReq = captured.find((row) => row.method === "POST" && row.pathname === "/payments")
+    expect(createReq?.psuIp).toBe("203.0.113.10")
+    expect(createReq?.body).toEqual(
+      expect.objectContaining({
+        payment_type: "SEPA",
+        payment_request: {
+          credit_transfer_transaction: [
+            expect.objectContaining({
+              instructed_amount: { amount: "15.00", currency: "EUR" },
+            }),
+          ],
+        },
+      }),
+    )
+    const got = await Effect.runPromise(bank.getPayment("pay-1"))
+    expect(got).toEqual({ paymentId: "pay-1", status: "ACCC" })
+    const submitted = await Effect.runPromise(bank.submitPayment("pay-1"))
+    expect(submitted.status).toBe("ACCC")
+    await Effect.runPromise(bank.deletePayment("pay-1"))
+    expect(captured.some((row) => row.method === "DELETE" && row.pathname === "/payments/pay-1")).toBe(true)
+  })
+
+  it("fails for malformed ASPSP directory responses", async () => {
+    hasAspspsOverride = true
+    try {
+      for (const aspsps of [{ name: "Demo Bank", country: "FI" }, [{ name: "Demo Bank" }]]) {
+        aspspsOverride = aspsps
+        const failure = await Effect.runPromise(Effect.flip(service().listAspsps()))
+        expect(failure).toBeInstanceOf(ProviderUnavailable)
+      }
+    } finally {
+      hasAspspsOverride = false
+      aspspsOverride = undefined
+    }
+  })
+
+  it("canonicalizes safe provider URLs and rejects unsafe response URLs", async () => {
+    const payment = () => ({
+      aspsp: { name: "Demo Bank", country: "FI" },
+      redirectUrl: "https://finch.example/pay",
+      state: "pay-state",
+      paymentType: "SEPA",
+      creditorName: "Acme",
+      creditorIban: "FI2112345600000785",
+      amountMinor: Schema.decodeUnknownSync(AmountMinor)(1500n),
+      currency: Schema.decodeUnknownSync(CurrencyCode)("EUR"),
+    })
+    const authorization = {
+      aspsp: { name: "Demo Bank", country: "FI" },
+      redirectUrl: "https://finch.example/callback",
+      state: "s-1",
+    }
+    const bank = service()
+    hasProviderUrlOverride = true
+    try {
+      providerUrlOverride = "https://bank.example"
+      await expect(Effect.runPromise(bank.startAuthorization(authorization))).resolves.toEqual({
+        url: "https://bank.example/",
+      })
+      await expect(Effect.runPromise(bank.createPayment(payment()))).resolves.toEqual({
+        paymentId: "pay-1",
+        status: "PDNG",
+        url: "https://bank.example/",
+      })
+
+      for (const url of ["http://bank.example/authorize", "https://client:secret@bank.example/authorize", "not a URL"]) {
+        providerUrlOverride = url
+        const failure = await Effect.runPromise(Effect.flip(bank.startAuthorization(authorization)))
+        expect(failure).toBeInstanceOf(ProviderUnavailable)
+      }
+
+      providerUrlOverride = "http://bank.example/pay"
+      const paymentFailure = await Effect.runPromise(Effect.flip(bank.createPayment(payment())))
+      expect(paymentFailure).toBeInstanceOf(ProviderUnavailable)
+
+      providerUrlOverride = undefined
+      await expect(Effect.runPromise(bank.createPayment(payment()))).resolves.toEqual({
+        paymentId: "pay-1",
+        status: "PDNG",
+      })
+    } finally {
+      hasProviderUrlOverride = false
+      providerUrlOverride = undefined
+    }
+  })
+
   it("fails when credentials are empty", async () => {
     const bank = service("", "")
+    const failure = await Effect.runPromise(Effect.flip(bank.listAspsps()))
+    expect(failure).toBeInstanceOf(ProviderUnavailable)
+    expect(failure.message).toBe("Enable Banking credentials missing")
+  })
+
+  it("fails before network access when credentials are whitespace", async () => {
+    const bank = service("   ", "   ")
     const failure = await Effect.runPromise(Effect.flip(bank.listAspsps()))
     expect(failure).toBeInstanceOf(ProviderUnavailable)
     expect(failure.message).toBe("Enable Banking credentials missing")

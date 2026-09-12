@@ -21,6 +21,10 @@ export class ReceiptNotFound extends Data.TaggedError("ReceiptNotFound")<{
   readonly receiptId: string
 }> {}
 
+export class PaymentNotFound extends Data.TaggedError("PaymentNotFound")<{
+  readonly paymentId: string
+}> {}
+
 export class ReconciliationConflict extends Data.TaggedError("ReconciliationConflict")<{
   readonly reason: string
 }> {}

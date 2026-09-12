@@ -2,5 +2,19 @@
   "name": "@finch/reconciliation",
   "version": "0.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./score": "./src/score.ts",
+    "./matcher": "./src/matcher.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@finch/core": "workspace:*",
+    "@finch/db": "workspace:*",
+    "@finch/search": "workspace:*",
+    "effect": "3.22.1"
+  }
 }
