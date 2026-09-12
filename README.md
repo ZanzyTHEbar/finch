@@ -1,8 +1,6 @@
 # Finch
 
-Finch is a Supabase-native personal-finance service. It receives bank data through Enable Banking, keeps receipt originals in private Storage, and exposes authenticated REST endpoints.
-
-This is a fresh cloud deployment. It does not deploy or publicly serve the former local SQLite/MCP runtime.
+Finch is a Postgres-native personal-finance service. It receives bank data through providers, like Enable Banking, keeps receipt originals in private Storage, and exposes authenticated endpoints.
 
 ## Runtime
 
@@ -16,7 +14,7 @@ The client supplies `x-finch-workspace` only as a requested context. The API ver
 
 ## MCP status
 
-`@finch/mcp` is transitional, in-process test support for legacy regressions. It is not a deployable public MCP runtime, and its legacy stdio executable fails closed. The approved replacement is an agent-only Streamable HTTP MCP exposing `exec` and `docs`; it is not implemented yet.
+`@finch/mcp` StresmableHTTP MCP exposing `exec` and `docs`.
 
 ## Local development
 
