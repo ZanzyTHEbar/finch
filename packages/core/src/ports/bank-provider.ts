@@ -49,26 +49,6 @@ export const BankSession = Schema.Struct({
 
 export type BankSession = Schema.Schema.Type<typeof BankSession>
 
-export const BankPayment = Schema.Struct({
-  paymentId: Schema.String,
-  status: Schema.String,
-  url: Schema.optional(Schema.String),
-})
-
-export type BankPayment = Schema.Schema.Type<typeof BankPayment>
-
-export interface CreateBankPaymentInput {
-  readonly aspsp: BankAspsp
-  readonly redirectUrl: string
-  readonly state: string
-  readonly paymentType: string
-  readonly creditorName: string
-  readonly creditorIban: string
-  readonly amountMinor: AmountMinor
-  readonly currency: CurrencyCode
-  readonly remittance?: string
-}
-
 export const BankProviderConfig = Schema.Struct({
   baseUrl: Schema.String,
   applicationId: Schema.String,
@@ -109,11 +89,5 @@ export class BankProvider extends Context.Tag("BankProvider")<
       since?: Schema.Schema.Type<typeof IsoDate>,
     ) => Effect.Effect<readonly BankTransactionSnapshot[], ProviderUnavailable>
     readonly deleteSession: (sessionId: string) => Effect.Effect<void, ProviderUnavailable>
-    readonly createPayment: (
-      input: CreateBankPaymentInput,
-    ) => Effect.Effect<BankPayment, ProviderUnavailable>
-    readonly getPayment: (paymentId: string) => Effect.Effect<BankPayment, ProviderUnavailable>
-    readonly submitPayment: (paymentId: string) => Effect.Effect<BankPayment, ProviderUnavailable>
-    readonly deletePayment: (paymentId: string) => Effect.Effect<void, ProviderUnavailable>
   }
 >() {}

@@ -53,14 +53,6 @@ const authorizationInput = {
   state: "test-state",
 };
 
-const paymentInput = {
-  ...authorizationInput,
-  creditorName: "Example Creditor",
-  creditorIban: "PT50000201231234567890154",
-  amountMinor: "100",
-  currency: "EUR",
-};
-
 beforeAll(async () => {
   globals.Deno = { env: { get: (name: string) => environment.get(name) } };
   const { privateKey } = await generateKeyPair("RS256", { extractable: true });
@@ -98,6 +90,16 @@ describe("Enable Banking Edge payload validation", () => {
     expect(() => banking.paymentStatusFromProvider("UNKNOWN")).toThrow(
       expect.objectContaining({ code: "provider_invalid_response", retryable: false }),
     );
+  });
+
+  it.each([
+    ["ACCC", "accepted"],
+    ["ACSC", "accepted"],
+    ["ACSP", "submitted"],
+    ["ACPT", "submitted"],
+    ["ACTC", "submitted"],
+  ])("maps documented provider payment status %s to %s", (providerStatus, expectedStatus) => {
+    expect(banking.paymentStatusFromProvider(providerStatus)).toBe(expectedStatus);
   });
 
   it.each([
@@ -152,13 +154,9 @@ describe("Enable Banking Edge payload validation", () => {
       ));
   });
 
-  it("accepts HTTPS credential-free provider authorization and payment URLs", async () => {
+  it("accepts HTTPS credential-free provider authorization URLs", async () => {
     await expect(withProviderPayloads([{ url: "https://bank.example/authorize" }], () => banking.startAuthorization(admin, authorizationInput)))
       .resolves.toBe("https://bank.example/authorize");
-    await expect(withProviderPayloads(
-      [{ payment_id: "payment-1", status: "PDNG", url: "https://bank.example/pay" }],
-      () => banking.createPayment(admin, paymentInput),
-    )).resolves.toMatchObject({ providerPaymentRef: "payment-1", authorizationUrl: "https://bank.example/pay" });
   });
 
   it.each(["http://bank.example/authorize", "https://user:secret@bank.example/authorize"])(
@@ -167,23 +165,6 @@ describe("Enable Banking Edge payload validation", () => {
       await expectInvalidResponse(() => withProviderPayloads([{ url }], () => banking.startAuthorization(admin, authorizationInput)));
     },
   );
-
-  it.each(["http://bank.example/pay", "https://user:secret@bank.example/pay"])(
-    "rejects an unsafe provider payment URL: %s",
-    async (url) => {
-      await expectInvalidResponse(() => withProviderPayloads(
-        [{ payment_id: "payment-1", status: "PDNG", url }],
-        () => banking.createPayment(admin, paymentInput),
-      ));
-    },
-  );
-
-  it("keeps an absent payment URL optional", async () => {
-    await expect(withProviderPayloads(
-      [{ payment_id: "payment-1", status: "PDNG" }],
-      () => banking.createPayment(admin, paymentInput),
-    )).resolves.toMatchObject({ providerPaymentRef: "payment-1", authorizationUrl: undefined });
-  });
 
   it("treats a missing provider session as already deleted", async () => {
     const originalFetch = globalThis.fetch;

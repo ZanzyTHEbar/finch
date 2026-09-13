@@ -1,9 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
 import type { AddressInfo } from "node:net"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { Effect, Schema } from "effect"
+import { Effect } from "effect"
 import { exportPKCS8, generateKeyPair } from "jose"
-import { AmountMinor, CurrencyCode } from "../../packages/core/src/domain/money.ts"
 import { ProviderUnavailable } from "../../packages/core/src/ports/bank-provider.ts"
 import { makeEnableBankingService } from "../../packages/enablebanking/src/client.ts"
 
@@ -133,22 +132,6 @@ describe("EnableBanking client", () => {
               ],
             }
           }
-        } else if (method === "POST" && pathname === "/payments") {
-          status = 200
-          payload = {
-            payment_id: "pay-1",
-            status: "PDNG",
-            url: hasProviderUrlOverride ? providerUrlOverride : "https://bank.example/pay",
-          }
-        } else if (method === "GET" && pathname === "/payments/pay-1") {
-          status = 200
-          payload = { payment_id: "pay-1", status: "ACCC" }
-        } else if (method === "POST" && pathname === "/payments/pay-1/submit") {
-          status = 200
-          payload = { payment_id: "pay-1", status: "ACCC" }
-        } else if (method === "DELETE" && pathname === "/payments/pay-1") {
-          status = 200
-          payload = { payment_id: "pay-1", status: "CANC" }
         } else if (method === "DELETE" && pathname === "/sessions/sess-1") {
           status = 204
           res.writeHead(status)
@@ -274,44 +257,6 @@ describe("EnableBanking client", () => {
     }
   })
 
-  it("creates, reads, submits, and deletes a payment", async () => {
-    captured.length = 0
-    const bank = service()
-    const created = await Effect.runPromise(
-      bank.createPayment({
-        aspsp: { name: "Demo Bank", country: "FI" },
-        redirectUrl: "https://finch.example/pay",
-        state: "pay-state",
-        paymentType: "SEPA",
-        creditorName: "Acme",
-        creditorIban: "FI2112345600000785",
-        amountMinor: Schema.decodeUnknownSync(AmountMinor)(1500n),
-        currency: Schema.decodeUnknownSync(CurrencyCode)("EUR"),
-      }),
-    )
-    expect(created).toEqual({ paymentId: "pay-1", status: "PDNG", url: "https://bank.example/pay" })
-    const createReq = captured.find((row) => row.method === "POST" && row.pathname === "/payments")
-    expect(createReq?.psuIp).toBe("203.0.113.10")
-    expect(createReq?.body).toEqual(
-      expect.objectContaining({
-        payment_type: "SEPA",
-        payment_request: {
-          credit_transfer_transaction: [
-            expect.objectContaining({
-              instructed_amount: { amount: "15.00", currency: "EUR" },
-            }),
-          ],
-        },
-      }),
-    )
-    const got = await Effect.runPromise(bank.getPayment("pay-1"))
-    expect(got).toEqual({ paymentId: "pay-1", status: "ACCC" })
-    const submitted = await Effect.runPromise(bank.submitPayment("pay-1"))
-    expect(submitted.status).toBe("ACCC")
-    await Effect.runPromise(bank.deletePayment("pay-1"))
-    expect(captured.some((row) => row.method === "DELETE" && row.pathname === "/payments/pay-1")).toBe(true)
-  })
-
   it("fails for malformed ASPSP directory responses", async () => {
     hasAspspsOverride = true
     try {
@@ -326,17 +271,7 @@ describe("EnableBanking client", () => {
     }
   })
 
-  it("canonicalizes safe provider URLs and rejects unsafe response URLs", async () => {
-    const payment = () => ({
-      aspsp: { name: "Demo Bank", country: "FI" },
-      redirectUrl: "https://finch.example/pay",
-      state: "pay-state",
-      paymentType: "SEPA",
-      creditorName: "Acme",
-      creditorIban: "FI2112345600000785",
-      amountMinor: Schema.decodeUnknownSync(AmountMinor)(1500n),
-      currency: Schema.decodeUnknownSync(CurrencyCode)("EUR"),
-    })
+  it("canonicalizes safe provider authorization URLs and rejects unsafe response URLs", async () => {
     const authorization = {
       aspsp: { name: "Demo Bank", country: "FI" },
       redirectUrl: "https://finch.example/callback",
@@ -349,11 +284,6 @@ describe("EnableBanking client", () => {
       await expect(Effect.runPromise(bank.startAuthorization(authorization))).resolves.toEqual({
         url: "https://bank.example/",
       })
-      await expect(Effect.runPromise(bank.createPayment(payment()))).resolves.toEqual({
-        paymentId: "pay-1",
-        status: "PDNG",
-        url: "https://bank.example/",
-      })
 
       for (const url of ["http://bank.example/authorize", "https://client:secret@bank.example/authorize", "not a URL"]) {
         providerUrlOverride = url
@@ -361,15 +291,6 @@ describe("EnableBanking client", () => {
         expect(failure).toBeInstanceOf(ProviderUnavailable)
       }
 
-      providerUrlOverride = "http://bank.example/pay"
-      const paymentFailure = await Effect.runPromise(Effect.flip(bank.createPayment(payment())))
-      expect(paymentFailure).toBeInstanceOf(ProviderUnavailable)
-
-      providerUrlOverride = undefined
-      await expect(Effect.runPromise(bank.createPayment(payment()))).resolves.toEqual({
-        paymentId: "pay-1",
-        status: "PDNG",
-      })
     } finally {
       hasProviderUrlOverride = false
       providerUrlOverride = undefined

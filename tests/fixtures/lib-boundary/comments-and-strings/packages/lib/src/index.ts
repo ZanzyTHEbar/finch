@@ -1,7 +1,7 @@
 import type { TenantId } from "@finch/core/domain"
 
 // import "@finch/db"
-/* export * from "@connectrpc/connect" */
+/* export * from "@finch/enablebanking" */
 const importLikeText = [
   'import("@finch/search")',
   'require("@finch/enablebanking")',

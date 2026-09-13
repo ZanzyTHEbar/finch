@@ -9,7 +9,6 @@ export {
   AccountNotFound,
   TransactionNotFound,
   ReceiptNotFound,
-  PaymentNotFound,
   ReconciliationConflict,
   ValidationFailed,
 } from "./errors.ts"

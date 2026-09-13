@@ -1,5 +1,8 @@
 begin;
-select plan(19);
+select plan(22);
+
+delete from pgmq.q_finch_jobs;
+delete from pgmq.a_finch_jobs;
 
 insert into auth.users (id, email)
 values
@@ -122,10 +125,23 @@ select results_eq(
 );
 set local role service_role;
 set local request.jwt.claim.role = 'service_role';
+select set_config('finch.test_job_id', (
+  select id::text
+  from public.job_requests
+  where workspace_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+    and idempotency_key = 'connection:33333333-3333-3333-3333-333333333333:initial'
+), true);
+create temporary table finch_test_claim as
+select * from public.claim_finch_jobs('44444444-4444-4444-4444-444444444444', 10);
 select results_eq(
-  $$select count(*)::integer from public.claim_finch_jobs('44444444-4444-4444-4444-444444444444', 10)$$,
+  $$select count(*)::integer from finch_test_claim$$,
   array[1],
   'one worker receives one queue lease'
+);
+select results_eq(
+  $$select job_id::text from finch_test_claim$$,
+  array[current_setting('finch.test_job_id')],
+  'the worker receives the fixture job rather than a pre-existing message'
 );
 reset role;
 select results_eq(
@@ -133,16 +149,9 @@ select results_eq(
   array['running'],
   'claim transitions the job to running'
 );
-select set_config('finch.test_job_id', (
-  select id::text
-  from public.job_requests
-  where workspace_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
-    and idempotency_key = 'connection:33333333-3333-3333-3333-333333333333:initial'
-), true);
 select set_config('finch.test_message_id', (
-  select msg_id::text
-  from pgmq.q_finch_jobs
-  where message ->> 'job_id' = current_setting('finch.test_job_id')
+  select message_id::text
+  from finch_test_claim
 ), true);
 set local role service_role;
 set local request.jwt.claim.role = 'service_role';
@@ -164,6 +173,16 @@ select results_eq(
   $$select status::text from public.job_requests where workspace_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'$$,
   array['retry'],
   'retry removes the worker lease and retains durable job state'
+);
+select results_eq(
+  $$select count(*)::integer from public.job_requests where id = current_setting('finch.test_job_id')::uuid and lease_owner is null and lease_expires_at is null and lease_message_id is null$$,
+  array[1],
+  'retry clears every lease field'
+);
+select results_eq(
+  $$select count(*)::integer from pgmq.q_finch_jobs where message ->> 'job_id' = current_setting('finch.test_job_id')$$,
+  array[1],
+  'retry leaves one delayed replacement message'
 );
 
 select * from finish();

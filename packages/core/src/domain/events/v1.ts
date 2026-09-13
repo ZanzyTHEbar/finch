@@ -120,37 +120,6 @@ export const SummaryGeneratedV1 = Schema.Struct({
   contentHash: Schema.String,
 })
 
-export const PaymentCreatedV1 = Schema.Struct({
-  paymentId: Schema.String,
-  status: Schema.String,
-  url: Schema.optional(Schema.String),
-  aspspName: Schema.String,
-  aspspCountry: Schema.String,
-  amountMinor: AmountMinor,
-  currency: CurrencyCode,
-  creditorName: Schema.String,
-  creditorIban: Schema.String,
-  paymentType: Schema.String,
-  remittance: Schema.optional(Schema.String),
-  state: Schema.String,
-})
-
-export type PaymentCreatedV1 = Schema.Schema.Type<typeof PaymentCreatedV1>
-
-export const PaymentStatusChangedV1 = Schema.Struct({
-  paymentId: Schema.String,
-  status: Schema.String,
-  url: Schema.optional(Schema.String),
-})
-
-export type PaymentStatusChangedV1 = Schema.Schema.Type<typeof PaymentStatusChangedV1>
-
-export const PaymentDeletedV1 = Schema.Struct({
-  paymentId: Schema.String,
-})
-
-export type PaymentDeletedV1 = Schema.Schema.Type<typeof PaymentDeletedV1>
-
 export const BankConnectionCreatedV1 = Schema.Struct({
   aspspName: Schema.optional(Schema.String),
   aspspCountry: Schema.optional(Schema.String),
@@ -198,9 +167,6 @@ export const EventCatalogV1: Record<string, Schema.Schema.Any> = {
   MatchConfirmed: MatchConfirmedV1,
   MatchRejected: MatchRejectedV1,
   SummaryGenerated: SummaryGeneratedV1,
-  PaymentCreated: PaymentCreatedV1,
-  PaymentStatusChanged: PaymentStatusChangedV1,
-  PaymentDeleted: PaymentDeletedV1,
   BankConnectionCreated: BankConnectionCreatedV1,
   BankConnectionRevoked: BankConnectionRevokedV1,
   BankSyncStarted: BankSyncStartedV1,

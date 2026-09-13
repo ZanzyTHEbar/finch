@@ -7,9 +7,14 @@ const url = process.env.FINCH_TEST_SUPABASE_URL;
 const anonKey = process.env.FINCH_TEST_SUPABASE_ANON_KEY;
 const serviceKey = process.env.FINCH_TEST_SUPABASE_SERVICE_ROLE_KEY;
 const workerToken = process.env.FINCH_TEST_WORKER_TOKEN;
+const databaseUrl = process.env.FINCH_TEST_SUPABASE_DB_URL;
 
-if (url === undefined || anonKey === undefined || serviceKey === undefined || workerToken === undefined) {
+if (url === undefined || anonKey === undefined || serviceKey === undefined || workerToken === undefined || databaseUrl === undefined) {
   throw new Error("cloud tests require scripts/run-cloud-tests.mjs");
+}
+const isLoopbackHost = (host: string): boolean => ["127.0.0.1", "localhost", "::1", "[::1]"].includes(host);
+if (!isLoopbackHost(new URL(url).hostname) || !isLoopbackHost(new URL(databaseUrl).hostname)) {
+  throw new Error("cloud tests require a disposable local Supabase database");
 }
 
 type ReceiptUploadTarget = {
@@ -310,7 +315,7 @@ describe("Supabase Auth and RLS", () => {
     await uploadReceipt(deleteFailureIntent.upload, deleteFailureBytes);
 
     const db = new PostgresClient({
-      connectionString: process.env.FINCH_TEST_SUPABASE_DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+      connectionString: databaseUrl,
     });
     await db.connect();
     try {
@@ -385,7 +390,7 @@ describe("Supabase Auth and RLS", () => {
     await uploadReceipt(auditFailureIntent.upload, auditFailureBytes);
 
     const auditDb = new PostgresClient({
-      connectionString: process.env.FINCH_TEST_SUPABASE_DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+      connectionString: databaseUrl,
     });
     await auditDb.connect();
     try {
@@ -447,20 +452,28 @@ describe("Supabase Auth and RLS", () => {
     expect(await allowedWorker.json()).toMatchObject({ processed: 1, succeeded: 1, retried: 0, dead: 0 });
   });
 
-  it("requires recent MFA for payments, exports, and irreversible deletion", async () => {
+  it("requires recent MFA for exports and irreversible deletion", async () => {
     const alice = await createUserClient("mfa");
     const { data: workspaceId, error } = await alice.rpc("create_workspace", { p_name: "MFA finance" });
     expect(error).toBeNull();
     const token = await accessToken(alice);
     const headers = { authorization: `Bearer ${token}`, "x-finch-workspace": workspaceId, "content-type": "application/json" };
-    const [payment, exportRequest, deletion] = await Promise.all([
-      fetch(`${url}/functions/v1/api/payments`, { method: "POST", headers, body: JSON.stringify({ returnPath: "/payments/complete" }) }),
+    const [exportRequest, deletion] = await Promise.all([
       fetch(`${url}/functions/v1/api/exports`, { method: "POST", headers }),
       fetch(`${url}/functions/v1/api/deletion-requests`, { method: "POST", headers, body: JSON.stringify({ confirm: true }) }),
     ]);
-    expect(payment.status).toBe(403);
     expect(exportRequest.status).toBe(403);
     expect(deletion.status).toBe(403);
+  });
+
+  it("does not expose payment API routes", async () => {
+    const [create, list] = await Promise.all([
+      fetch(`${url}/functions/v1/api/payments`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }),
+      fetch(`${url}/functions/v1/api/payments`),
+    ]);
+
+    expect(create.status).toBe(404);
+    expect(list.status).toBe(404);
   });
 
   it("recovers an uploaded export archive when its metadata write is interrupted", async () => {
@@ -610,20 +623,6 @@ describe("Supabase Auth and RLS", () => {
       expect(await rejected.json()).toEqual({ error: "invalid_return_path" });
     }
 
-    const validPaymentPath = await fetch(`${url}/functions/v1/api/payments`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ returnPath: "/payments/complete?source=provider#done" }),
-    });
-    expect(validPaymentPath.status).toBe(403);
-    const rejectedPaymentPath = await fetch(`${url}/functions/v1/api/payments`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ returnPath: "https://attacker.test/return" }),
-    });
-    expect(rejectedPaymentPath.status).toBe(400);
-    expect(await rejectedPaymentPath.json()).toEqual({ error: "invalid_return_path" });
-
     const callbackState = `bank-callback-${crypto.randomUUID()}`;
     const { data: connection, error: connectionError } = await admin
       .from("bank_connections")
@@ -745,12 +744,10 @@ describe("Supabase Auth and RLS", () => {
     });
     const tools = (await listed.json()) as { result: { tools: Array<{ name: string; inputSchema: { required: string[] } }> } };
     const bankAuthorization = tools.result.tools.find((tool) => tool.name === "start_bank_authorization");
-    const payment = tools.result.tools.find((tool) => tool.name === "create_payment");
     expect(bankAuthorization?.inputSchema.required).toContain("returnPath");
     expect(bankAuthorization?.inputSchema.required).not.toContain("redirectUrl");
-    expect(payment?.inputSchema.required).toContain("returnPath");
-    expect(payment?.inputSchema.required).not.toContain("redirectUrl");
-    expect(tools.result.tools.find((tool) => tool.name === "submit_payment")).toBeUndefined();
+    const paymentTools = new Set(["create_payment", "list_payments", "get_payment", "submit_payment", "delete_payment"]);
+    expect(tools.result.tools.map((tool) => tool.name).filter((name) => paymentTools.has(name))).toEqual([]);
     const invalidBankCallback = await fetch(`${url}/functions/v1/bank-callback?state=invalid&code=invalid`);
     expect(invalidBankCallback.status).toBe(400);
   });

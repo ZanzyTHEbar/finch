@@ -14,14 +14,12 @@
     "supabase:test": "supabase test db --local",
     "test:cloud": "node scripts/run-cloud-tests.mjs",
     "test:boundaries": "node scripts/check-lib-boundary.mjs",
-    "test:contracts": "bun run --filter @finch/contracts test",
     "test:lib": "bun ./node_modules/vitest/vitest.mjs run --config vitest.config.ts tests/lib",
     "test:edge": "bun ./node_modules/vitest/vitest.mjs run --config vitest.config.ts tests/supabase/enable-banking-edge.test.ts tests/supabase/bank-callback-activation-cleanup.test.ts tests/supabase/bank-callback-activation-guard.test.ts tests/supabase/bank-callback-payment-outcome.test.ts",
-    "test:client": "bun ./node_modules/vitest/vitest.mjs run --config vitest.targeted.config.ts tests/client",
     "test:mcp": "bun ./node_modules/vitest/vitest.mjs run --config vitest.targeted.config.ts tests/mcp",
-    "test:connect": "bun ./node_modules/vitest/vitest.mjs run --config vitest.targeted.config.ts tests/connect",
+    "test:reconciliation": "bun ./node_modules/vitest/vitest.mjs run --config vitest.targeted.config.ts tests/reconciliation",
     "test:enablebanking": "bun ./node_modules/vitest/vitest.mjs run --config vitest.targeted.config.ts tests/enablebanking",
-    "verify": "bun run typecheck && bun run test:contracts && bun run test:boundaries && bun run test:lib && bun run test:edge && bun run test:client && bun run test:mcp && bun run test:connect && bun run test:enablebanking && bun run supabase:reset && bun run supabase:bootstrap:local && bun run supabase:test && bun run test:cloud"
+    "verify": "bun run typecheck && bun run test:boundaries && bun run test:lib && bun run test:edge && bun run test:mcp && bun run test:reconciliation && bun run test:enablebanking && bun run supabase:reset && bun run supabase:bootstrap:local && bun run supabase:test && bun run test:cloud"
   },
   "devDependencies": {
     "@supabase/supabase-js": "2.116.0",

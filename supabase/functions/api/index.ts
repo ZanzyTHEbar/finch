@@ -1,8 +1,8 @@
 import { byteaFromHex, randomState, requireSha256Hex, sha256Bytea } from "../_shared/crypto.ts";
-import { createPayment, paymentStatusFromProvider, ProviderError, startAuthorization } from "../_shared/enable-banking.ts";
+import { ProviderError, startAuthorization } from "../_shared/enable-banking.ts";
 import { errorResponse, HttpError, json, noContent, options, parseJson, requireString, requireUuid } from "../_shared/http.ts";
 import { requireReturnPath } from "../_shared/return-path.ts";
-import { assertNoError, requireRecentAal2, requireUser, requireWorkspace, type WorkspaceContext } from "../_shared/supabase.ts";
+import { assertNoError, requireUser, requireWorkspace, type WorkspaceContext } from "../_shared/supabase.ts";
 
 const bankCallbackUrl = (): string => {
   const value = Deno.env.get("FINCH_BANK_CALLBACK_URL")?.trim();
@@ -451,102 +451,6 @@ const requestDeletion = async (request: Request): Promise<Response> => {
   return json({ deletionId: data }, 202);
 };
 
-const paymentResponse = (payment: Record<string, unknown>) => ({
-  paymentId: payment.id,
-  status: payment.status,
-  ...(typeof payment.authorization_url === "string" ? { authorizationUrl: payment.authorization_url } : {}),
-  ...(typeof payment.safe_error_code === "string" ? { safeErrorCode: payment.safe_error_code } : {}),
-});
-
-const createPaymentOrder = async (request: Request): Promise<Response> => {
-  const context = await requireWorkspace(request, ["owner", "admin"]);
-  const body = await parseJson(request);
-  const returnPath = requireReturnPath(body.returnPath);
-  requireRecentAal2(context);
-  const connectionId = requireUuid(body.connectionId, "connection_id");
-  const clientRequestId = requireUuid(body.clientRequestId, "client_request_id");
-  const creditorName = requireString(body.creditorName, "creditor_name", 140);
-  const creditorIban = requireString(body.creditorIban, "creditor_iban", 34).replaceAll(" ", "").toUpperCase();
-  if (!/^[A-Z]{2}[A-Z0-9]{13,32}$/.test(creditorIban)) throw new HttpError(400, "invalid_creditor_iban");
-  const amountMinor = requireString(body.amountMinor, "amount_minor", 20);
-  if (!/^\d+$/.test(amountMinor) || BigInt(amountMinor) <= 0n) throw new HttpError(400, "invalid_amount_minor");
-  const currency = requireString(body.currency, "currency", 3).toUpperCase();
-  if (!/^[A-Z]{3}$/.test(currency)) throw new HttpError(400, "invalid_currency");
-  if (currency !== "EUR") throw new HttpError(400, "unsupported_payment_currency");
-  const remittance = body.remittance === undefined ? undefined : requireString(body.remittance, "remittance", 140);
-  const { data: existing, error: existingError } = await context.admin
-    .from("payment_orders")
-    .select("*")
-    .eq("workspace_id", context.workspaceId)
-    .eq("client_request_id", clientRequestId)
-    .maybeSingle();
-  if (existingError !== null) throw new HttpError(500, "storage_unavailable");
-  if (existing !== null) return json(paymentResponse(existing));
-  const connection = await getRow<{ status: string; aspsp_name: string; aspsp_country: string }>(context, "bank_connections", connectionId);
-  if (connection.status !== "active") throw new HttpError(409, "bank_connection_not_active");
-  const paymentId = crypto.randomUUID();
-  const state = randomState();
-  const { error: insertError } = await context.admin.from("payment_orders").insert({
-    id: paymentId,
-    workspace_id: context.workspaceId,
-    bank_connection_id: connectionId,
-    client_request_id: clientRequestId,
-    status: "created",
-    creditor_name: creditorName,
-    creditor_iban: creditorIban,
-    amount_minor: amountMinor,
-    currency,
-    remittance: remittance ?? null,
-    state_hash: await sha256Bytea(state),
-    return_path: returnPath,
-    state_expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    created_by: context.userId,
-  });
-  if (insertError !== null) throw new HttpError(500, "storage_unavailable");
-  try {
-    const providerPayment = await createPayment(context.admin, {
-      aspspName: connection.aspsp_name,
-      aspspCountry: connection.aspsp_country,
-      redirectUrl: bankCallbackUrl(),
-      state,
-      creditorName,
-      creditorIban,
-      amountMinor,
-      currency,
-      ...(remittance === undefined ? {} : { remittance }),
-    });
-    const status = paymentStatusFromProvider(providerPayment.status);
-    const { data: saved, error: updateError } = await context.admin
-      .from("payment_orders")
-      .update({ provider_payment_ref: providerPayment.providerPaymentRef, status, authorization_url: providerPayment.authorizationUrl ?? null })
-      .eq("id", paymentId)
-      .select("*")
-      .single();
-    if (updateError !== null || saved === null) throw new HttpError(500, "storage_unavailable");
-    await audit(context, "payment.created", "payment_order", paymentId, "success");
-    return json(paymentResponse(saved), 201);
-  } catch (cause) {
-    const code = cause instanceof ProviderError ? cause.code : "payment_creation_failed";
-    await context.admin
-      .from("payment_orders")
-      .update({ status: "submission_unknown", safe_error_code: code })
-      .eq("id", paymentId)
-      .in("status", ["created", "authorization_pending", "submitting", "submitted"]);
-    await audit(context, "payment.create_failed", "payment_order", paymentId, "failed", code);
-    throw new HttpError(502, code);
-  }
-};
-
-const listPayments = async (request: Request): Promise<Response> => {
-  const context = await requireWorkspace(request, ["owner", "admin"]);
-  const { data, error } = await context.client
-    .from("payment_orders_safe")
-    .select("id,status,authorization_url,safe_error_code,created_at,updated_at")
-    .eq("workspace_id", context.workspaceId)
-    .order("created_at", { ascending: false });
-  return json(assertNoError({ data, error }));
-};
-
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return options();
   try {
@@ -569,8 +473,6 @@ Deno.serve(async (request) => {
     const exportUrls = pathname.match(/^\/api\/exports\/([0-9a-f-]{36})\/download-urls$/i);
     if (request.method === "GET" && exportUrls?.[1] !== undefined) return await exportDownloadUrls(request, requireUuid(exportUrls[1], "export_id"));
     if (request.method === "POST" && pathname === "/api/deletion-requests") return await requestDeletion(request);
-    if (request.method === "POST" && pathname === "/api/payments") return await createPaymentOrder(request);
-    if (request.method === "GET" && pathname === "/api/payments") return await listPayments(request);
     throw new HttpError(404, "not_found");
   } catch (cause) {
     return errorResponse(cause);

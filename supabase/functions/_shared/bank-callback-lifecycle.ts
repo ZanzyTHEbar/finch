@@ -49,8 +49,14 @@ export const completeBankAuthorization = async (
         await lifecycle.revokeRemoteSession(session);
       } catch {
         // Do not overwrite an unavailable revocation state with an error state.
+        return "compensation_failed";
       }
-      return "compensation_failed";
+      try {
+        await lifecycle.completeDisconnect();
+        return "revoked";
+      } catch {
+        return "compensation_failed";
+      }
     }
     try {
       await lifecycle.revokeRemoteSession(session);

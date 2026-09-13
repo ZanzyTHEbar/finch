@@ -15,7 +15,6 @@ import { VectorIndexLive } from "../../packages/db/src/vector-index.ts"
 import { tenants } from "../../packages/db/src/schema/index.ts"
 import { makeEnableBankingService } from "../../packages/enablebanking/src/client.ts"
 import { BankIngestLive } from "../../packages/enablebanking/src/ingest.ts"
-import { BankPaymentsLive } from "../../packages/enablebanking/src/payments.ts"
 import { ReceiptMatcherLive } from "../../packages/reconciliation/src/matcher.ts"
 import { HybridSearchLive } from "../../packages/search/src/hybrid.ts"
 import { NoopRerankerLive } from "../../packages/search/src/rerank.ts"
@@ -169,8 +168,7 @@ describe("MCP bank tools", () => {
     )
     const ingest = Layer.provide(BankIngestLive, Layer.mergeAll(base, bank))
     const matcher = Layer.provide(ReceiptMatcherLive, Layer.mergeAll(base, hybrid))
-    const pay = Layer.provide(BankPaymentsLive, Layer.mergeAll(base, bank))
-    return Layer.mergeAll(base, indexes, cannedEmbeddings, testConfig, hybrid, bank, ingest, matcher, pay)
+    return Layer.mergeAll(base, indexes, cannedEmbeddings, testConfig, hybrid, bank, ingest, matcher)
   }
 
   it("binds auth state to tenant, syncs booked txs, and deletes the session", async () => {

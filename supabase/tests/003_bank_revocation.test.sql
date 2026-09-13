@@ -1,5 +1,5 @@
 begin;
-select plan(13);
+select plan(15);
 
 insert into auth.users (id, email)
 values ('88888888-8888-4888-8888-888888888888', 'revocation@example.test');
@@ -119,6 +119,22 @@ select ok(
     where c.id = 'ffffffff-ffff-4fff-8fff-ffffffffffff'
   ),
   'a failed completion leaves the connection and secret retryable'
+);
+
+insert into public.bank_connections (id, workspace_id, provider, aspsp_name, aspsp_country, status, created_by)
+values ('11111111-1111-4111-8111-111111111111', '99999999-9999-4999-8999-999999999999', 'enablebanking', 'Already Revoked Bank', 'PT', 'revoked', '88888888-8888-4888-8888-888888888888');
+set local role service_role;
+set local request.jwt.claim.role = 'service_role';
+select public.store_bank_connection_secret('11111111-1111-4111-8111-111111111111', 'already-revoked-session-secret');
+select lives_ok(
+  $$select public.complete_bank_disconnect('99999999-9999-4999-8999-999999999999', '11111111-1111-4111-8111-111111111111', '88888888-8888-4888-8888-888888888888')$$,
+  'completion is idempotent after a concurrent terminal revocation'
+);
+reset role;
+select ok(
+  not exists (select 1 from vault.secrets where name = 'bank_connection_11111111-1111-4111-8111-111111111111')
+    and (select vault_secret_id is null from public.bank_connections where id = '11111111-1111-4111-8111-111111111111'),
+  'idempotent completion deletes a secret left by a terminal revocation race'
 );
 
 select * from finish();

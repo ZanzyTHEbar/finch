@@ -16,7 +16,6 @@ import {
   TenantMismatch,
   TransactionNotFound,
   ValidationFailed,
-  PaymentNotFound,
   type ProviderUnavailable,
   type ReceiptNotFound,
 } from "@finch/core"
@@ -38,7 +37,6 @@ import {
   embeddings,
   events,
   jobs,
-  payments,
   projectionCheckpoints,
   receipts,
   reconciliations,
@@ -49,33 +47,27 @@ import {
   bankAuthIntents,
 } from "@finch/db"
 import { Db } from "@finch/db"
-import { BankIngest, BankPayments, type IngestStats } from "@finch/enablebanking"
+import { BankIngest, type IngestStats } from "@finch/enablebanking"
 import { ReceiptMatcher, type MatchStats } from "@finch/reconciliation"
 import type {
   BankAspsp,
   BankAuthorization,
-  BankPayment,
   BankSession,
 } from "@finch/core"
 import {
   authorizeBankSession,
   captureReceipt,
   confirmMatch,
-  createPayment,
   deleteBankSession,
-  deletePayment,
   getBankStatus,
-  getPayment,
   getReceipt,
   getTransaction,
   listAspsps,
-  listPayments,
   listUnmatchedReceipts,
   matchReceipts,
   rejectMatch,
   searchFinances,
   startBankAuth,
-  submitPayment,
   syncBank,
 } from "@finch/lib-legacy"
 
@@ -92,7 +84,6 @@ export type FinchMcpEnv =
   | EventStore
   | ProjectionRunner
   | ReceiptMatcher
-  | BankPayments
   | AccountRepository
   | Db
 
@@ -106,7 +97,6 @@ type ToolFailure =
   | ValidationFailed
   | TenantMismatch
   | ReconciliationConflict
-  | PaymentNotFound
 
 // Effect Schema is the tree's validation language (no zod in-repo): tool
 // inputs decode here, and every rejection surfaces as a typed
@@ -306,89 +296,6 @@ const TOOLS: Tool[] = [
     },
   },
   {
-    name: "create_payment",
-    description:
-      "Create a SEPA credit transfer through the connected bank. Returns a payment id and a bank redirect URL where the user must authorize the payment. After authorization, call submit_payment to finalize.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        tenantId: { type: "string" },
-        aspspName: { type: "string" },
-        aspspCountry: { type: "string" },
-        redirectUrl: { type: "string" },
-        state: { type: "string" },
-        creditorName: { type: "string" },
-        creditorIban: { type: "string" },
-        amountMinor: { type: "integer", minimum: 1 },
-        currency: { type: "string" },
-        paymentType: { type: "string" },
-        remittance: { type: "string" },
-      },
-      required: [
-        "tenantId",
-        "aspspName",
-        "aspspCountry",
-        "redirectUrl",
-        "state",
-        "creditorName",
-        "creditorIban",
-        "amountMinor",
-        "currency",
-      ],
-    },
-  },
-  {
-    name: "list_payments",
-    description:
-      "List all payments created for a tenant. Each payment includes its current status (pending, authorized, submitted, etc.).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        tenantId: { type: "string" },
-      },
-      required: ["tenantId"],
-    },
-  },
-  {
-    name: "get_payment",
-    description:
-      "Fetch a specific payment by id. Refreshes the status from the banking provider to ensure it's up to date.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        tenantId: { type: "string" },
-        paymentId: { type: "string" },
-      },
-      required: ["tenantId", "paymentId"],
-    },
-  },
-  {
-    name: "submit_payment",
-    description:
-      "Finalize a payment after the user has authorized it at the bank. Must be called after create_payment and bank authorization.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        tenantId: { type: "string" },
-        paymentId: { type: "string" },
-      },
-      required: ["tenantId", "paymentId"],
-    },
-  },
-  {
-    name: "delete_payment",
-    description:
-      "Cancel and delete a payment. Only payments that haven't been submitted yet can be deleted.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        tenantId: { type: "string" },
-        paymentId: { type: "string" },
-      },
-      required: ["tenantId", "paymentId"],
-    },
-  },
-  {
     name: "delete_bank_session",
     description:
       "Disconnect a tenant's bank account. Deletes both the local session record and the remote authorization at the banking provider. The tenant will need to re-authorize to reconnect.",
@@ -485,7 +392,6 @@ const deleteAccount = (args: unknown): Effect.Effect<{ readonly deleted: true },
         db.delete(events).where(eq(events.tenantId, input.tenantId)).run()
         db.delete(bankSessions).where(eq(bankSessions.tenantId, input.tenantId)).run()
         db.delete(bankAuthIntents).where(eq(bankAuthIntents.tenantId, input.tenantId)).run()
-        db.delete(payments).where(eq(payments.tenantId, input.tenantId)).run()
         db.delete(accounts).where(eq(accounts.tenantId, input.tenantId)).run()
         db.delete(projectionCheckpoints).where(eq(projectionCheckpoints.tenantId, input.tenantId)).run()
       },
@@ -520,7 +426,6 @@ const dataPrivacy = (args: unknown): Effect.Effect<
         "reconciliations",
         "jobs",
         "projection_checkpoints",
-        "payments",
       ],
       exportTool: "export_data",
       deleteTool: "delete_account",
@@ -537,10 +442,8 @@ type ToolResult =
   | { readonly deleted: true }
   | readonly ReceiptRow[]
   | readonly BankAspsp[]
-  | readonly BankPayment[]
   | BankAuthorization
   | BankSession
-  | BankPayment
   | IngestStats
   | MatchStats
   | { readonly connected: boolean; readonly status?: BankSessionStatus; readonly sessionId?: string }
@@ -582,16 +485,6 @@ const toolEffect = (name: string, args: unknown): Effect.Effect<ToolResult, Tool
       return confirmMatch(args)
     case "reject_match":
       return rejectMatch(args)
-    case "create_payment":
-      return createPayment(args)
-    case "list_payments":
-      return listPayments(args)
-    case "get_payment":
-      return getPayment(args)
-    case "submit_payment":
-      return submitPayment(args)
-    case "delete_payment":
-      return deletePayment(args)
     case "delete_bank_session":
       return deleteBankSession(args)
     case "get_bank_status":
@@ -631,7 +524,6 @@ const SAFE_ERROR_FIELDS = [
   "tenantId",
   "documentId",
   "reason",
-  "paymentId",
 ] as const
 
 const errorPayload = (failure: unknown): Record<string, unknown> => {

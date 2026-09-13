@@ -10,7 +10,6 @@ export const AggregateType = Schema.Literal(
   "receipt",
   "reconciliation",
   "summary",
-  "payment",
 )
 
 export type AggregateType = Schema.Schema.Type<typeof AggregateType>

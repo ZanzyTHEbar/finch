@@ -4,7 +4,6 @@ import {
   blendScore,
   shouldPropose,
   shouldAutoMatch,
-  EMBEDDING_BOOST,
 } from "../../packages/reconciliation/src/score.ts"
 
 describe("scoring pipeline integration", () => {
@@ -66,9 +65,8 @@ describe("scoring pipeline integration", () => {
     const base = 0.7
     const highSimilarity = 0.95
     const noSimilarity = 0.0
-    const boosted = blendScore(base, highSimilarity, 0)
-    const unboosted = blendScore(base, noSimilarity, 0)
-    // boosted = min(1, 0.7 + 0.15*0.95) * 1.0 = min(1, 0.8425) = 0.8425
+    const boosted = blendScore(base, highSimilarity)
+    const unboosted = blendScore(base, noSimilarity)
     expect(boosted).toBeGreaterThan(unboosted)
     expect(boosted).toBeCloseTo(0.8425, 10)
     expect(unboosted).toBeCloseTo(base, 10)

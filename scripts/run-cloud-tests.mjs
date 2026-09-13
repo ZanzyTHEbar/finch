@@ -1,6 +1,9 @@
 import { execFileSync, spawn } from "node:child_process";
 import { writeFile, rm } from "node:fs/promises";
 
+execFileSync("bunx", ["supabase", "db", "reset", "--local", "--no-seed"], { stdio: "inherit" });
+execFileSync("bun", ["run", "supabase:bootstrap:local"], { stdio: "inherit" });
+
 const status = execFileSync("bunx", ["supabase", "status", "-o", "env"], { encoding: "utf8" });
 const environment = Object.fromEntries(
   status
@@ -10,7 +13,7 @@ const environment = Object.fromEntries(
     .map((match) => [match[1], match[2]]),
 );
 
-for (const key of ["API_URL", "ANON_KEY", "SERVICE_ROLE_KEY"]) {
+for (const key of ["API_URL", "ANON_KEY", "SERVICE_ROLE_KEY", "DB_URL"]) {
   if (typeof environment[key] !== "string" || environment[key] === "") {
     throw new Error(`local Supabase is not ready: missing ${key}`);
   }
@@ -74,11 +77,10 @@ try {
     FINCH_TEST_SUPABASE_ANON_KEY: environment.ANON_KEY,
     FINCH_TEST_SUPABASE_SERVICE_ROLE_KEY: environment.SERVICE_ROLE_KEY,
     FINCH_TEST_WORKER_TOKEN: workerToken,
+    FINCH_TEST_SUPABASE_DB_URL: environment.DB_URL,
   };
   for (const testFile of [
     "tests/supabase/auth-rls.test.ts",
-    "tests/supabase/connect-ledger-adapter.test.ts",
-    "tests/supabase/connect-receipt-adapter.test.ts",
   ]) {
     execFileSync("bun", ["./node_modules/vitest/vitest.mjs", "run", testFile, "--no-file-parallelism"], {
       stdio: "inherit",

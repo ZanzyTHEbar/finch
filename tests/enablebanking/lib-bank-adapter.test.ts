@@ -45,10 +45,6 @@ const fakeProvider = (options: ProviderOptions = {}) =>
       options.onDeleteSession?.(sessionId)
       return options.deleteError === undefined ? Effect.void : Effect.fail(options.deleteError)
     },
-    createPayment: () => Effect.die("not used"),
-    getPayment: () => Effect.die("not used"),
-    submitPayment: () => Effect.die("not used"),
-    deletePayment: () => Effect.die("not used"),
   })
 
 const adapterLayer = (provider = fakeProvider()) =>

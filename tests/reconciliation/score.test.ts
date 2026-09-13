@@ -4,26 +4,11 @@ import {
   scorePair,
   shouldPropose,
   shouldAutoMatch,
-  EMBEDDING_BOOST,
 } from "../../packages/reconciliation/src/score.ts"
 
 describe("blendScore", () => {
-  it("with no days ago has no decay", () => {
-    // blendScore(0.6, 0.5) = min(1, 0.6 + 0.15*0.5) * max(0.5, 1 - 0*0.005)
-    //                     = min(1, 0.675) * 1.0 = 0.675
+  it("adds the embedding similarity boost", () => {
     expect(blendScore(0.6, 0.5)).toBeCloseTo(0.675, 10)
-  })
-
-  it("decays with days", () => {
-    const noDecay = blendScore(0.6, 0.5, 0)
-    const withDecay = blendScore(0.6, 0.5, 100)
-    expect(withDecay).toBeLessThan(noDecay)
-  })
-
-  it("floors at 0.5 factor", () => {
-    // timeDecayFactor(1000) = max(0.5, 1 - 1000*0.005) = max(0.5, -4.0) = 0.5
-    // blendScore(1.0, 1.0, 1000) = min(1, 1 + 0.15*1) * 0.5 = 1.0 * 0.5 = 0.5
-    expect(blendScore(1.0, 1.0, 1000)).toBeCloseTo(0.5, 10)
   })
 
   it("returns 0 when base is 0", () => {

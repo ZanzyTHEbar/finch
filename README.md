@@ -1,6 +1,8 @@
 # Finch
 
-Finch is a Postgres-native personal-finance service. It receives bank data through providers, like Enable Banking, keeps receipt originals in private Storage, and exposes authenticated endpoints.
+Finch is a Supabase-native personal-finance service. It receives bank data through Enable Banking, keeps receipt originals in private Storage, and exposes authenticated REST endpoints.
+
+This is a fresh cloud deployment. It does not deploy or publicly serve the former local SQLite/MCP runtime.
 
 ## Runtime
 
@@ -14,7 +16,7 @@ The client supplies `x-finch-workspace` only as a requested context. The API ver
 
 ## MCP status
 
-`@finch/mcp` StresmableHTTP MCP exposing `exec` and `docs`.
+`@finch/mcp` is transitional, in-process test support for legacy regressions. It is not a deployable public MCP runtime, and its legacy stdio executable fails closed. The approved replacement is an agent-only Streamable HTTP MCP exposing `exec` and `docs`; it is not implemented yet.
 
 ## Local development
 
@@ -42,7 +44,7 @@ bun run test:cloud
 
 | Function | Purpose |
 | --- | --- |
-| `api` | Authenticated workspace, bank, receipt, search, export, deletion, AI, and payment API. |
+| `api` | Authenticated workspace, bank, receipt, search, export, deletion, and AI API. |
 | `bank-callback` | Handles opaque Enable Banking authorization state and stores the provider session in Vault. |
 | `worker-run` | Claims PGMQ jobs for sync, embeddings, exports, cleanup, deletion, payment polling, and summaries. |
 | `mcp` | Authenticated remote MCP JSON-RPC transport. |
@@ -54,7 +56,7 @@ All functions validate user tokens themselves, so deploy them with `--no-verify-
 - Browser/client roles have no direct Storage object access; uploads and downloads use short-lived signed URLs.
 - Raw bank-provider references, Vault IDs, receipt object keys, payment redirect state, and queued payloads are not client-readable.
 - User reads are RLS-scoped. Safe views expose only intended fields where raw rows contain server-only values.
-- Payment, export, and workspace deletion require an `aal2` Supabase Auth token.
+- Export and workspace deletion require an `aal2` Supabase Auth token.
 - AI work is opt-in per workspace. Prompts contain a fixed aggregate only; credentials and full source records are not sent to the model.
 - Jobs have idempotency keys, worker leases, bounded retries, delayed redelivery, and a PGMQ dead-letter archive.
 

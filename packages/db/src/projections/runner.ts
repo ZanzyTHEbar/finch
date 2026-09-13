@@ -10,9 +10,6 @@ import {
   MatchConfirmedV1,
   MatchProposedV1,
   MatchRejectedV1,
-  PaymentCreatedV1,
-  PaymentDeletedV1,
-  PaymentStatusChangedV1,
   ReceiptCapturedV1,
   ReceiptMatchedV1,
   StorageUnavailable,
@@ -28,7 +25,6 @@ import {
 } from "@finch/core";
 import type {
   AccountNotFound,
-  PaymentNotFound,
   ReceiptNotFound,
   ReconciliationConflict,
   TenantId,
@@ -40,7 +36,6 @@ import { EventStore, type EventRecord } from "../event-store.ts";
 import { AccountRepository } from "../repositories/account.ts";
 import { BankSessionRepository } from "../repositories/bank-session.ts";
 import { EventReadRepository } from "../repositories/event.ts";
-import { PaymentRepository } from "../repositories/payment.ts";
 import { ReceiptRepository } from "../repositories/receipt.ts";
 import { ReconciliationRepository, type ReconciliationRow } from "../repositories/reconciliation.ts";
 import { SearchDocumentRepository } from "../repositories/search-document.ts";
@@ -71,7 +66,6 @@ export type ProjectError =
   | AccountNotFound
   | TransactionNotFound
   | ReceiptNotFound
-  | PaymentNotFound
   | ReconciliationConflict
   | TenantMismatch;
 
@@ -111,7 +105,6 @@ export const ProjectionRunnerLive: Layer.Layer<
   | BankSessionRepository
   | TransactionRepository
   | ReceiptRepository
-  | PaymentRepository
   | SearchDocumentRepository
   | SummaryRepository
   | ReconciliationRepository
@@ -126,7 +119,6 @@ export const ProjectionRunnerLive: Layer.Layer<
     const bankSessions = yield* BankSessionRepository;
     const txs = yield* TransactionRepository;
     const receiptsRepo = yield* ReceiptRepository;
-    const paymentsRepo = yield* PaymentRepository;
     const docs = yield* SearchDocumentRepository;
     const summariesRepo = yield* SummaryRepository;
     const recons = yield* ReconciliationRepository;
@@ -368,34 +360,6 @@ export const ProjectionRunnerLive: Layer.Layer<
             yield* ensureDecided(tenantId, p.transactionId, p.receiptId, 0, (t, tx, rx) =>
               recons.reject(t, tx, rx),
             );
-            break;
-          }
-          case "PaymentCreated": {
-            const p = yield* decodePayload(PaymentCreatedV1, event.eventType, payload);
-            yield* paymentsRepo.put(tenantId, {
-              paymentId: p.paymentId,
-              status: p.status,
-              url: p.url ?? null,
-              aspspName: p.aspspName,
-              aspspCountry: p.aspspCountry,
-              amountMinor: p.amountMinor,
-              currency: p.currency,
-              creditorName: p.creditorName,
-              creditorIban: p.creditorIban,
-              paymentType: p.paymentType,
-              remittance: p.remittance ?? null,
-              state: p.state,
-            });
-            break;
-          }
-          case "PaymentStatusChanged": {
-            const p = yield* decodePayload(PaymentStatusChangedV1, event.eventType, payload);
-            yield* paymentsRepo.updateStatus(tenantId, p.paymentId, p.status, p.url);
-            break;
-          }
-          case "PaymentDeleted": {
-            const p = yield* decodePayload(PaymentDeletedV1, event.eventType, payload);
-            yield* paymentsRepo.remove(tenantId, p.paymentId);
             break;
           }
           case "SummaryGenerated": {

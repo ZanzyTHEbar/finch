@@ -3,7 +3,6 @@ export * from "./events.ts";
 export * from "./accounts.ts";
 export * from "./bank-sessions.ts";
 export * from "./bank-auth-intents.ts";
-export * from "./payments.ts";
 export * from "./transactions.ts";
 export * from "./receipts.ts";
 export * from "./search.ts";

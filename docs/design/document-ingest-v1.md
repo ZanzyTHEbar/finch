@@ -27,12 +27,8 @@ microservice on day one:
   cannot meet the current Edge worker's safe budget of about 45 seconds, or
   when queue volume requires continuous consumption.
 
-The target public control-plane transport is ConnectRPC, consistent with
-[`connectrpc-cutover.md`](connectrpc-cutover.md). The current deployed cloud
-API is Supabase Edge REST. Until the ConnectRPC cutover exists, an interim
-REST endpoint may preserve the same commands and invariants. Do **not** extend
-or expose `packages/connect`: it is a local SQLite process, not a cloud
-service.
+The public control plane is the Supabase Edge REST API. New endpoints preserve
+the commands and invariants below.
 
 ## 2. Why This Exists
 
@@ -92,7 +88,6 @@ The target design must respect these current facts:
 | `worker-run` Edge Function | Cron invokes it once a minute with a 55-second HTTP timeout; each invocation claims one PGMQ job. | Initial stages need a hard sub-45-second budget. Long OCR/VLM work belongs in a persistent worker or provider async/polling stages. |
 | PGMQ plus `job_requests` | Has idempotency keys, leases, retry, delayed redelivery, and dead-lettering. | Reuse it. Do not introduce Temporal, another queue, or Realtime as a work queue without an explicit new decision. |
 | `receipt-originals` | Is private but limited to JPEG/PNG/PDF at 10 MiB. | Create a separate private document-originals bucket and contracts for broader files; do not weaken the existing receipt bucket ad hoc. |
-| `packages/connect` | Runs a loopback Node/SQLite service and accepts caller-selected tenant IDs. | It is legacy-only and unsafe as the cloud ingestion control plane. |
 | `workspace_ai_policies` | Covers embeddings and assistant summaries only. | Vision/OCR provider authorization needs a distinct, explicit document-processing policy. |
 
 ## 5. Service Boundary
@@ -285,11 +280,10 @@ extraction state.
 
 ## 8. Intake Contracts
 
-### 8.1 Target ConnectRPC commands
+### 8.1 Control-plane operations
 
-`document.ingest.v1` will ultimately expose these commands. The command
-semantics are required even if an interim REST adapter is used before the
-ConnectRPC cutover.
+`document.ingest.v1` exposes these operations through the Supabase Edge REST
+API.
 
 | Command | Purpose |
 | --- | --- |
@@ -309,7 +303,7 @@ All commands carry a requested workspace context. The server authenticates the
 Supabase JWT and verifies active membership before accessing any row, following
 the existing `requireWorkspace` model.
 
-### 8.2 Bytes never travel through the control RPC
+### 8.2 Bytes never travel through the control API
 
 - Large files use private resumable Storage upload.
 - `SubmitDocument` carries an authorized object reference and idempotency key.
@@ -539,8 +533,7 @@ but it is not the correctness mechanism because locks disappear with sessions.
   vision policy.
 - Create the private document-originals bucket with file limits/mime allowlists
   appropriate to the first supported types.
-- Define the target ConnectRPC protobuf in the canonical future contracts
-  package, not in legacy `packages/connect/proto`.
+- Define versioned request and response schemas for the Edge API operations.
 - Decide the provider benchmark corpus, data-processing terms, and EU-region
   requirements before sending real documents externally.
 
@@ -622,7 +615,6 @@ The following are intentionally not part of the first vertical slice:
 - Corpus-derived templates or automatic authority-weight changes.
 - A second job system, Temporal, or a full external document orchestration
   platform.
-- Reusing the legacy SQLite ConnectRPC service or caller-supplied tenant IDs.
 
 ## 18. Implementation Checklist
 
@@ -642,17 +634,13 @@ An implementation agent must confirm every item before marking a slice done:
 8. Tests inject provider failure and worker redelivery, not only happy paths.
 9. The user-visible progress model distinguishes verified original, processing,
    review required, published, and terminal failure.
-10. New capabilities are added to the canonical ConnectRPC contracts during the
-    cutover; they are not added to the local SQLite Connect server.
+10. New capabilities extend the Supabase Edge REST API and preserve the
+    workspace-authorization invariants above.
 
 ## 19. Evidence and Related Documents
 
-- Current receipt pipeline and gaps:
-  [`docs/RECEIPT_PIPELINE_AUDIT.md`](../RECEIPT_PIPELINE_AUDIT.md)
 - Current cloud deployment/worker limit:
   [`docs/CLOUD_DEPLOYMENT.md`](../CLOUD_DEPLOYMENT.md)
-- Target ConnectRPC control-plane direction:
-  [`docs/design/connectrpc-cutover.md`](connectrpc-cutover.md)
 - Current private receipt storage and schema:
   `supabase/schemas/finch.sql`, `supabase/config.toml`
 - Current cloud receipt API and worker:

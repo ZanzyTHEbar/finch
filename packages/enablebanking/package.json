@@ -7,8 +7,7 @@
     ".": "./src/index.ts",
     "./jwt": "./src/jwt.ts",
     "./client": "./src/client.ts",
-    "./ingest": "./src/ingest.ts",
-    "./payments": "./src/payments.ts"
+    "./ingest": "./src/ingest.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"

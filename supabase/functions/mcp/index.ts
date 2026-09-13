@@ -24,8 +24,6 @@ const tools: readonly Tool[] = [
   { name: "request_data_export", description: "Request a complete asynchronous data export. Requires a recent MFA-authenticated owner session.", inputSchema: { type: "object", properties: workspaceProperty, required: ["workspaceId"] } },
   { name: "get_export_download_urls", description: "Issue 60-second signed URLs for each completed export archive part.", inputSchema: { type: "object", properties: { ...workspaceProperty, exportId: { type: "string" } }, required: ["workspaceId", "exportId"] } },
   { name: "request_workspace_deletion", description: "Request irreversible workspace deletion. Requires a recent MFA-authenticated owner session and confirmation.", inputSchema: { type: "object", properties: { ...workspaceProperty, confirm: { type: "boolean" } }, required: ["workspaceId", "confirm"] } },
-  { name: "create_payment", description: "Create a SEPA payment authorization. Requires a recent MFA-authenticated owner or admin session.", inputSchema: { type: "object", properties: { ...workspaceProperty, connectionId: { type: "string" }, clientRequestId: { type: "string" }, creditorName: { type: "string" }, creditorIban: { type: "string" }, amountMinor: { type: "string" }, currency: { type: "string" }, returnPath: { type: "string" }, remittance: { type: "string" } }, required: ["workspaceId", "connectionId", "clientRequestId", "creditorName", "creditorIban", "amountMinor", "currency", "returnPath"] } },
-  { name: "list_payments", description: "List payment orders in a workspace.", inputSchema: { type: "object", properties: workspaceProperty, required: ["workspaceId"] } },
 ];
 
 type Route = { readonly method: "GET" | "POST"; readonly path: (args: Record<string, unknown>) => string; readonly body?: (args: Record<string, unknown>) => Record<string, unknown> };
@@ -45,8 +43,6 @@ const routes: Readonly<Record<string, Route>> = {
   request_data_export: { method: "POST", path: () => "/api/exports" },
   get_export_download_urls: { method: "GET", path: (args) => `/api/exports/${encodeURIComponent(requireString(args.exportId, "export_id"))}/download-urls` },
   request_workspace_deletion: { method: "POST", path: () => "/api/deletion-requests", body: (args) => ({ confirm: args.confirm }) },
-  create_payment: { method: "POST", path: () => "/api/payments", body: (args) => ({ connectionId: args.connectionId, clientRequestId: args.clientRequestId, creditorName: args.creditorName, creditorIban: args.creditorIban, amountMinor: args.amountMinor, currency: args.currency, returnPath: args.returnPath, remittance: args.remittance }) },
-  list_payments: { method: "GET", path: () => "/api/payments" },
 };
 
 const rpc = (id: unknown, result: unknown): Response => json({ jsonrpc: "2.0", id, result });

@@ -35,14 +35,6 @@ create table public.profiles (
   updated_at timestamptz not null default now()
 );
 
-create table public.authentik_subject_profiles (
-  issuer text not null check (char_length(trim(issuer)) > 0),
-  subject text not null check (char_length(trim(subject)) > 0),
-  profile_id uuid not null unique references public.profiles(id) on delete cascade,
-  created_at timestamptz not null default now(),
-  primary key (issuer, subject)
-);
-
 create table public.workspaces (
   id uuid primary key default extensions.gen_random_uuid(),
   name text not null check (char_length(trim(name)) between 1 and 120),
@@ -355,12 +347,16 @@ create table public.job_requests (
   available_at timestamptz not null default now(),
   lease_owner uuid,
   lease_expires_at timestamptz,
+  lease_message_id bigint,
   safe_error_code text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   completed_at timestamptz,
   unique (workspace_id, kind, idempotency_key),
-  check ((status = 'running') = (lease_owner is not null and lease_expires_at is not null)),
+  check (
+    (status = 'running' and lease_owner is not null and lease_expires_at is not null and lease_message_id is not null)
+    or (status <> 'running' and lease_owner is null and lease_expires_at is null and lease_message_id is null)
+  ),
   check ((status in ('succeeded', 'dead', 'cancelled')) = (completed_at is not null))
 );
 create index job_requests_claim_idx on public.job_requests(status, available_at) where status in ('queued', 'retry');
@@ -659,66 +655,6 @@ begin
 end;
 $$;
 
-create function public.link_authentik_subject_profile(
-  p_issuer text,
-  p_subject text,
-  p_profile_id uuid
-)
-returns void
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  v_profile_id uuid;
-begin
-  perform private.require_service_role();
-  if nullif(trim(p_issuer), '') is null or nullif(trim(p_subject), '') is null then
-    raise exception 'issuer and subject must not be blank' using errcode = '22023';
-  end if;
-
-  insert into public.authentik_subject_profiles (issuer, subject, profile_id)
-  values (p_issuer, p_subject, p_profile_id)
-  on conflict (issuer, subject) do nothing;
-
-  select profile_id into v_profile_id
-  from public.authentik_subject_profiles
-  where issuer = p_issuer and subject = p_subject;
-
-  if not found then
-    raise exception 'profile is already linked to another Authentik subject' using errcode = '23505';
-  end if;
-  if v_profile_id is distinct from p_profile_id then
-    raise exception 'Authentik subject is already linked to another profile' using errcode = '23505';
-  end if;
-end;
-$$;
-
-create function public.resolve_authentik_workspace_access(
-  p_issuer text,
-  p_subject text,
-  p_workspace_id uuid
-)
-returns table (role public.workspace_role)
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  perform private.require_service_role();
-  return query
-  select m.role
-  from public.authentik_subject_profiles as p
-  join public.workspace_members as m on m.user_id = p.profile_id
-  join public.workspaces as w on w.id = m.workspace_id
-  where p.issuer = p_issuer
-    and p.subject = p_subject
-    and m.workspace_id = p_workspace_id
-    and m.revoked_at is null
-    and w.state = 'active';
-end;
-$$;
-
 create function public.set_workspace_ai_policy(
   p_workspace_id uuid,
   p_mode public.ai_mode,
@@ -892,33 +828,44 @@ declare
   v_message record;
   v_job public.job_requests%rowtype;
   v_job_id uuid;
+  v_scanned integer := 0;
+  v_claimed integer := 0;
 begin
   perform private.require_service_role();
   if p_limit < 1 or p_limit > 25 then
     raise exception 'job claim limit must be between 1 and 25' using errcode = '22023';
   end if;
 
-  for v_message in select * from pgmq.read('finch_jobs', 300, p_limit)
-  loop
+  while v_scanned < 25 and v_claimed < p_limit loop
+    select * into v_message from pgmq.read('finch_jobs', 300, 1);
+    exit when not found;
+    v_scanned := v_scanned + 1;
+
     begin
       v_job_id := (v_message.message ->> 'job_id')::uuid;
     exception when invalid_text_representation then
-      perform pgmq.delete('finch_jobs', v_message.msg_id);
+      if not pgmq.delete('finch_jobs', v_message.msg_id) then
+        raise exception 'malformed job queue message could not be deleted' using errcode = 'P0001';
+      end if;
       continue;
     end;
 
     update public.job_requests as j
-    set status = 'dead',
+      set status = 'dead',
         lease_owner = null,
         lease_expires_at = null,
+        lease_message_id = null,
         safe_error_code = 'lease_expired_max_attempts',
         completed_at = now()
     where j.id = v_job_id
       and j.status = 'running'
       and j.lease_expires_at <= now()
+      and j.lease_message_id = v_message.msg_id
       and j.attempts >= 8;
     if found then
-      perform pgmq.archive('finch_jobs', v_message.msg_id);
+      if not pgmq.archive('finch_jobs', v_message.msg_id) then
+        raise exception 'expired job queue message could not be archived' using errcode = 'P0001';
+      end if;
       continue;
     end if;
 
@@ -927,24 +874,41 @@ begin
         attempts = j.attempts + 1,
         lease_owner = p_worker_id,
         lease_expires_at = now() + interval '5 minutes',
+        lease_message_id = v_message.msg_id,
         safe_error_code = null
     where j.id = v_job_id
-      and (j.status in ('queued', 'retry') or (j.status = 'running' and j.lease_expires_at <= now()))
+      and (
+        j.status in ('queued', 'retry')
+        or (
+          j.status = 'running'
+          and j.lease_expires_at <= now()
+          and j.lease_message_id = v_message.msg_id
+        )
+      )
       and j.available_at <= now()
     returning * into v_job;
 
-    if not found then
-      perform pgmq.delete('finch_jobs', v_message.msg_id);
+    if found then
+      message_id := v_message.msg_id;
+      job_id := v_job.id;
+      workspace_id := v_job.workspace_id;
+      kind := v_job.kind;
+      payload := v_job.payload;
+      attempts := v_job.attempts;
+      v_claimed := v_claimed + 1;
+      return next;
       continue;
     end if;
 
-    message_id := v_message.msg_id;
-    job_id := v_job.id;
-    workspace_id := v_job.workspace_id;
-    kind := v_job.kind;
-    payload := v_job.payload;
-    attempts := v_job.attempts;
-    return next;
+    select * into v_job from public.job_requests where id = v_job_id;
+    if not found
+       or v_job.status in ('succeeded', 'dead', 'cancelled')
+       or (v_job.status = 'running' and v_job.lease_message_id is distinct from v_message.msg_id)
+    then
+      if not pgmq.delete('finch_jobs', v_message.msg_id) then
+        raise exception 'stale job queue message could not be deleted' using errcode = 'P0001';
+      end if;
+    end if;
   end loop;
 end;
 $$;
@@ -958,15 +922,18 @@ as $$
 begin
   perform private.require_service_role();
   update public.job_requests
-  set status = 'succeeded', lease_owner = null, lease_expires_at = null, completed_at = now()
+  set status = 'succeeded', lease_owner = null, lease_expires_at = null, lease_message_id = null, completed_at = now()
   where id = p_job_id
     and status = 'running'
     and lease_owner = p_worker_id
+    and lease_message_id = p_message_id
     and lease_expires_at > now();
   if not found then
     return false;
   end if;
-  perform pgmq.delete('finch_jobs', p_message_id);
+  if not pgmq.delete('finch_jobs', p_message_id) then
+    raise exception 'job queue message could not be completed' using errcode = 'P0001';
+  end if;
   delete from public.job_requests where id = p_job_id and kind = 'workspace.purge';
   return true;
 end;
@@ -990,6 +957,7 @@ begin
   where id = p_job_id
     and status = 'running'
     and lease_owner = p_worker_id
+    and lease_message_id = p_message_id
     and lease_expires_at > now();
   if not found then
     return false;
@@ -1045,6 +1013,7 @@ begin
   where id = p_job_id
     and status = 'running'
     and lease_owner = p_worker_id
+    and lease_message_id = p_message_id
     and lease_expires_at > now()
   for update;
   if not found then
@@ -1058,21 +1027,27 @@ begin
         available_at = now() + make_interval(secs => v_delay_seconds),
         lease_owner = null,
         lease_expires_at = null,
+        lease_message_id = null,
         safe_error_code = left(coalesce(p_safe_error_code, 'provider_unavailable'), 120)
     where id = p_job_id;
-    perform pgmq.delete('finch_jobs', p_message_id);
+    if not pgmq.delete('finch_jobs', p_message_id) then
+      raise exception 'job queue message could not be retried' using errcode = 'P0001';
+    end if;
     perform pgmq.send('finch_jobs', jsonb_build_object('job_id', p_job_id), v_delay_seconds);
     return 'retry';
   end if;
 
   update public.job_requests
-  set status = 'dead',
-      lease_owner = null,
-      lease_expires_at = null,
-      safe_error_code = left(coalesce(p_safe_error_code, 'terminal_failure'), 120),
+    set status = 'dead',
+        lease_owner = null,
+        lease_expires_at = null,
+        lease_message_id = null,
+        safe_error_code = left(coalesce(p_safe_error_code, 'terminal_failure'), 120),
       completed_at = now()
   where id = p_job_id;
-  perform pgmq.archive('finch_jobs', p_message_id);
+  if not pgmq.archive('finch_jobs', p_message_id) then
+    raise exception 'job queue message could not be dead-lettered' using errcode = 'P0001';
+  end if;
   if v_job.kind = 'payment.status.poll' then
     begin
       v_payment_id := (v_job.payload ->> 'payment_id')::uuid;
@@ -1229,18 +1204,19 @@ security definer
 set search_path = ''
 as $$
 declare
+  v_status public.bank_connection_status;
   v_secret_id uuid;
 begin
   perform private.require_service_role();
 
-  select c.vault_secret_id into v_secret_id
+  select c.status, c.vault_secret_id into v_status, v_secret_id
   from public.bank_connections as c
   where c.workspace_id = p_workspace_id
     and c.id = p_connection_id
-    and c.status = 'revocation_pending'
+    and c.status in ('revocation_pending', 'revoked')
   for update;
   if not found then
-    raise exception 'revocation-pending bank connection not found' using errcode = 'P0002';
+    raise exception 'revocation-pending or revoked bank connection not found' using errcode = 'P0002';
   end if;
 
   if v_secret_id is not null then
@@ -1251,6 +1227,9 @@ begin
       status = 'revoked'
   where workspace_id = p_workspace_id
     and id = p_connection_id;
+  if v_status = 'revoked' then
+    return true;
+  end if;
   perform private.write_audit(
     p_workspace_id,
     p_actor_id,
@@ -1448,7 +1427,6 @@ from public.data_exports
 where (select private.has_workspace_role(workspace_id, array['owner']::public.workspace_role[]));
 
 alter table public.profiles enable row level security;
-alter table public.authentik_subject_profiles enable row level security;
 alter table public.workspaces enable row level security;
 alter table public.workspace_members enable row level security;
 alter table public.workspace_ai_policies enable row level security;
@@ -1500,8 +1478,6 @@ grant usage, select on all sequences in schema public to service_role;
 
 revoke all on all functions in schema public from public, anon, authenticated;
 grant execute on function public.create_workspace(text) to authenticated;
-grant execute on function public.link_authentik_subject_profile(text, text, uuid) to service_role;
-grant execute on function public.resolve_authentik_workspace_access(text, text, uuid) to service_role;
 grant execute on function public.set_workspace_ai_policy(uuid, public.ai_mode, text, text, text, text) to authenticated;
 grant execute on function public.request_data_export(uuid) to authenticated;
 grant execute on function public.request_workspace_deletion(uuid, boolean) to authenticated;

@@ -76,7 +76,7 @@ describe("bank callback post-storage compensation", () => {
     expect(calls).toEqual(["store", "mark-revocation-pending", "revoke-remote", "audit-revocation-pending"]);
   });
 
-  it("reports a distinct safe compensation failure after storage when revocation marking fails", async () => {
+  it("cleans up a stored secret when revocation marking races a completed disconnect", async () => {
     const calls: string[] = [];
     const lifecycle: CallbackLifecycle = {
       createSession: async () => "provider-session",
@@ -94,8 +94,8 @@ describe("bank callback post-storage compensation", () => {
     };
     const complete: CompleteBankAuthorization = completeBankAuthorization;
 
-    await expect(complete(lifecycle, "authorization-code")).resolves.toBe("compensation_failed");
-    expect(calls).toEqual(["store", "mark-revocation-pending", "revoke-remote"]);
+    await expect(complete(lifecycle, "authorization-code")).resolves.toBe("revoked");
+    expect(calls).toEqual(["store", "mark-revocation-pending", "revoke-remote", "complete-disconnect"]);
   });
 
   it("revokes an unstored session before completing the local disconnect", async () => {

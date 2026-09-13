@@ -34,10 +34,6 @@ describe("bank reauthorization", () => {
           Effect.sync(() => {
             deletedSessionIds.push(sessionId)
           }),
-        createPayment: () => Effect.succeed({ paymentId: "payment-1", status: "PDNG" }),
-        getPayment: () => Effect.succeed({ paymentId: "payment-1", status: "PDNG" }),
-        submitPayment: () => Effect.succeed({ paymentId: "payment-1", status: "ACCC" }),
-        deletePayment: () => Effect.void,
       }),
     )
     const base = makeTestLayers(sqlite)

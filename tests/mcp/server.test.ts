@@ -17,7 +17,6 @@ import { SearchDocumentRepository } from "../../packages/db/src/repositories/sea
 import { TransactionRepository } from "../../packages/db/src/repositories/transaction.ts"
 import { makeEnableBankingService } from "../../packages/enablebanking/src/client.ts"
 import { BankIngestLive } from "../../packages/enablebanking/src/ingest.ts"
-import { BankPaymentsLive } from "../../packages/enablebanking/src/payments.ts"
 import { ReceiptMatcherLive } from "../../packages/reconciliation/src/matcher.ts"
 import { tenants } from "../../packages/db/src/schema/index.ts"
 import { VectorIndexLive } from "../../packages/db/src/vector-index.ts"
@@ -103,8 +102,7 @@ const makeLayers = (sqlite: Database) => {
   )
   const ingest = Layer.provide(BankIngestLive, Layer.mergeAll(base, bank))
   const matcher = Layer.provide(ReceiptMatcherLive, Layer.mergeAll(base, hybrid))
-  const pay = Layer.provide(BankPaymentsLive, Layer.mergeAll(base, bank))
-  return Layer.mergeAll(base, indexes, cannedEmbeddings, testConfig, hybrid, bank, ingest, matcher, pay)
+  return Layer.mergeAll(base, indexes, cannedEmbeddings, testConfig, hybrid, bank, ingest, matcher)
 }
 
 const seedLedger = (tid: TenantIdT) =>
@@ -181,7 +179,7 @@ const withStack = async <A>(run: (layer: ReturnType<typeof makeLayers>) => Promi
 }
 
 describe("finch MCP server", () => {
-  it("lists the four ledger tools", async () => {
+  it("does not expose payment or money-movement tools", async () => {
     await withStack(async (layer) => {
       const mcp = await connectInProcess(layer)
       try {
@@ -190,26 +188,29 @@ describe("finch MCP server", () => {
           "authorize_bank_session",
           "capture_receipt",
           "confirm_match",
-          "create_payment",
           "data_privacy",
           "delete_account",
           "delete_bank_session",
-          "delete_payment",
           "export_data",
           "get_bank_status",
-          "get_payment",
           "get_receipt",
           "get_transaction",
           "list_aspsps",
-          "list_payments",
           "list_unmatched_receipts",
           "match_receipts",
           "reject_match",
           "search_finances",
           "start_bank_auth",
-          "submit_payment",
           "sync_bank",
         ])
+        const paymentTools = new Set([
+          "create_payment",
+          "list_payments",
+          "get_payment",
+          "submit_payment",
+          "delete_payment",
+        ])
+        expect(tools.tools.map((tool) => tool.name).filter((name) => paymentTools.has(name))).toEqual([])
       } finally {
         await mcp.close()
       }

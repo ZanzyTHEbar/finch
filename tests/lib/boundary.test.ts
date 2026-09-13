@@ -16,7 +16,6 @@ describe("lib boundary checker", () => {
     expect(result.stderr).toContain("must not expose legacy subpaths")
     expect(result.stderr).toContain("imports bare @finch/core; use @finch/core/domain")
     expect(result.stderr).toContain("imports forbidden adapter or external package: @finch/db")
-    expect(result.stderr).toContain("imports forbidden adapter or external package: @connectrpc/connect")
     expect(result.stderr).toContain("imports forbidden adapter or external package: @finch/search")
     expect(result.stderr).toContain("imports forbidden adapter or external package: @finch/enablebanking")
     expect(result.stderr).toContain("imports unsafe domain barrel path: ../config/config.ts")

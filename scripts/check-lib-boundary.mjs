@@ -119,7 +119,6 @@ const verifyDomainBarrel = () => {
 
 const verifyLegacyImports = () => {
   const allowedLegacyConsumers = new Set([
-    "packages/connect/src/bank-service.ts",
     "packages/mcp/src/server.ts",
   ])
   for (const path of walk(resolve(root, "packages"))) {

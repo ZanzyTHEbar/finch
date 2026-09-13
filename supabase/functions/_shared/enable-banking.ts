@@ -41,9 +41,9 @@ export type PaymentStatus = "authorization_pending" | "submitted" | "accepted" |
 
 export const paymentStatusFromProvider = (providerStatus: string): PaymentStatus => {
   const status = providerStatus.toUpperCase();
-  if (["ACCC", "ACSC", "ACSP", "ACCEPTED", "COMPLETED"].includes(status)) return "accepted";
+  if (["ACCC", "ACSC", "ACCEPTED", "COMPLETED"].includes(status)) return "accepted";
   if (["RJCT", "REJECTED", "CANCELLED", "FAILED"].includes(status)) return "rejected";
-  if (["SUBMITTED", "ACTC"].includes(status)) return "submitted";
+  if (["SUBMITTED", "ACTC", "ACPT", "ACSP"].includes(status)) return "submitted";
   if (["PDNG", "PENDING", "AUTHORIZATION_PENDING"].includes(status)) return "authorization_pending";
   throw new ProviderError("provider_invalid_response", false);
 };
@@ -369,15 +369,6 @@ export const deleteSession = async (admin: SupabaseClient, sessionId: string): P
   }
 };
 
-const majorAmount = (minor: string, currency: string): string => {
-  if (!/^\d+$/.test(minor) || !/^[A-Z]{3}$/.test(currency)) throw new ProviderError("invalid_payment_amount", false);
-  const decimals = currencyDecimals(currency);
-  const value = BigInt(minor);
-  const divisor = BigInt(10 ** decimals);
-  if (decimals === 0) return value.toString();
-  return `${value / divisor}.${(value % divisor).toString().padStart(decimals, "0")}`;
-};
-
 const paymentFrom = (body: unknown): BankPayment => {
   const raw = record(body);
   const providerPaymentRef = text(raw?.payment_id);
@@ -388,41 +379,6 @@ const paymentFrom = (body: unknown): BankPayment => {
   if (authorizationUrl === undefined) throw new ProviderError("provider_invalid_response", false);
   return { providerPaymentRef, status, authorizationUrl };
 };
-
-export const createPayment = async (
-  admin: SupabaseClient,
-  input: {
-    aspspName: string;
-    aspspCountry: string;
-    redirectUrl: string;
-    state: string;
-    creditorName: string;
-    creditorIban: string;
-    amountMinor: string;
-    currency: string;
-    remittance?: string;
-  },
-): Promise<BankPayment> =>
-  paymentFrom(
-    await request(admin, "POST", "/payments", {
-      aspsp: { name: input.aspspName, country: input.aspspCountry },
-      redirect_url: input.redirectUrl,
-      state: input.state,
-      payment_type: "SEPA",
-      payment_request: {
-        credit_transfer_transaction: [
-          {
-            beneficiary: {
-              creditor: { name: input.creditorName },
-              creditor_account: { identification: input.creditorIban, scheme_name: "IBAN" },
-            },
-            instructed_amount: { amount: majorAmount(input.amountMinor, input.currency), currency: input.currency },
-            ...(input.remittance === undefined ? {} : { remittance_information: [input.remittance] }),
-          },
-        ],
-      },
-    }),
-  );
 
 export const getPayment = async (admin: SupabaseClient, providerPaymentRef: string): Promise<BankPayment> =>
   paymentFrom(await request(admin, "GET", `/payments/${encodeURIComponent(providerPaymentRef)}`));

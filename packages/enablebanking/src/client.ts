@@ -6,14 +6,11 @@ import {
   ProviderUnavailable,
   ValidationFailed,
   normalizeCurrency,
-  toMajor,
   type AppConfig,
   type BankAccountSnapshot,
   type BankAspsp,
-  type BankPayment,
   type BankProviderConfig,
   type BankTransactionSnapshot,
-  type CreateBankPaymentInput,
   type CurrencyCode,
 } from "@finch/core"
 import { signEnableBankingJwt } from "./jwt.ts"
@@ -381,72 +378,6 @@ export const makeEnableBankingService = (config: BankProviderConfig) => {
       Effect.asVoid,
     )
 
-  const mapPayment = (raw: unknown): BankPayment | undefined => {
-    const record = asRecord(raw)
-    const paymentId = asString(record?.["payment_id"])
-    const status = asString(record?.["status"])
-    if (paymentId === undefined || status === undefined) {
-      return undefined
-    }
-    const rawUrl = record?.["url"]
-    const url = rawUrl === undefined ? undefined : parseHttpsUrl(rawUrl)
-    if (rawUrl !== undefined && url === undefined) {
-      return undefined
-    }
-    return { paymentId, status, ...(url === undefined ? {} : { url }) }
-  }
-
-  const requirePayment = (raw: unknown, action: string): Effect.Effect<BankPayment, ProviderUnavailable> => {
-    const mapped = mapPayment(raw)
-    if (mapped === undefined) {
-      return Effect.fail(new ProviderUnavailable({ message: `Enable Banking ${action} returned no payment` }))
-    }
-    return Effect.succeed(mapped)
-  }
-
-  const createPayment = (
-    input: CreateBankPaymentInput,
-  ): Effect.Effect<BankPayment, ProviderUnavailable> =>
-    request("POST", "/payments", {
-      psu: true,
-      body: {
-        aspsp: { name: input.aspsp.name, country: input.aspsp.country },
-        redirect_url: input.redirectUrl,
-        state: input.state,
-        payment_type: input.paymentType,
-        payment_request: {
-          credit_transfer_transaction: [
-            {
-              beneficiary: {
-                creditor: { name: input.creditorName },
-                creditor_account: { identification: input.creditorIban, scheme_name: "IBAN" },
-              },
-              instructed_amount: {
-                amount: toMajor(input.amountMinor, input.currency),
-                currency: input.currency,
-              },
-              ...(input.remittance === undefined
-                ? {}
-                : { remittance_information: [input.remittance] }),
-            },
-          ],
-        },
-      },
-    }).pipe(Effect.flatMap((raw) => requirePayment(raw, "createPayment")))
-
-  const getPayment = (paymentId: string): Effect.Effect<BankPayment, ProviderUnavailable> =>
-    request("GET", `/payments/${encodeURIComponent(paymentId)}`).pipe(
-      Effect.flatMap((raw) => requirePayment(raw, "getPayment")),
-    )
-
-  const submitPayment = (paymentId: string): Effect.Effect<BankPayment, ProviderUnavailable> =>
-    request("POST", `/payments/${encodeURIComponent(paymentId)}/submit`, { psu: true }).pipe(
-      Effect.flatMap((raw) => requirePayment(raw, "submitPayment")),
-    )
-
-  const deletePayment = (paymentId: string): Effect.Effect<void, ProviderUnavailable> =>
-    request("DELETE", `/payments/${encodeURIComponent(paymentId)}`, { parseJson: false }).pipe(Effect.asVoid)
-
   return BankProvider.of({
     listAspsps,
     startAuthorization,
@@ -454,10 +385,6 @@ export const makeEnableBankingService = (config: BankProviderConfig) => {
     listAccounts,
     listTransactions,
     deleteSession,
-    createPayment,
-    getPayment,
-    submitPayment,
-    deletePayment,
   })
 }
 
