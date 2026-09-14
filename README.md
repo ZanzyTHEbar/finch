@@ -1,11 +1,83 @@
 # Finch
 
-Finch is a Supabase-native personal-finance service. It receives bank data through Enable Banking, keeps receipt originals in private Storage, and exposes authenticated REST endpoints.
+> [!IMPORTANT]
+> Finch is early-alpha and is based off of an enterprise system I built for a personal client. Finch is an attempt to open source, with permission, the core functionality and runtime so that others may benefit from it.
 
-This is a fresh cloud deployment. It does not deploy or publicly serve the former local SQLite/MCP runtime.
+Finch is a Supabase-native personal-finance intelligence service based off of the original work of Cerebrases for their knowledg-base, but applied to financial data.
+
+It receives bank data through a banking adapter, Enable Banking is the default, and document ingestion. Then builds an intelligent knowledge base around the data by a combination of deterministic and stochastic data extraction and organisation.
+
+Finches sole purpose is to ingest data and provide evidence artifacts relative to search query inputs. Think of finch as a bespoke FINancial searCH engine that adapts overtime to your data.
+
+Finch provides an adapter system to connect any sort of frontend. 
+
+- cli
+- RPC
+- MCP
+- REST
+- etc
+
+The inner library can compose any interface you wish. Finch ships built on-top of Supabase, but the model (and first prototype) can be built on sqlite as well.
 
 ## Runtime
 
+The finch runtime is designed to be drop-in permission-aware financial RAG over **where work already happens**.
+
+Answers: *Where is X? Who owns Y? What is Z?* with citations.
+
+Three jobs:
+
+1. Collect / store internal data  
+2. Query it  
+3. AuthZ + audit + analytics  
+
+## Design bet
+
+Do not fight tools. Extract from existing financial data tools. Connectors are small: *what the data is, how to connect, how often to refresh*.
+
+## How it works
+
+```
+sources ──ingest──► distill/normalize ──embed──► Postgres + pgvector
+                                                      │
+query ── hybrid retrieve ── fuse/rerank ── LLM ──► answer + sources
+```
+
+### Store
+
+Finch uses one Postgres table containing an LLM-generated data artifact summary distilled doc, embedding of select chunks + linked summary, metadata, source, timestamps  
+- pgvector, **3072-d** embeddings, HNSW  
+- Same row shape for every source → same query API.
+
+Data is ingested, key information is extracted out into a normalized structure and stored.
+
+### Ingest
+
+- Financial Tool Adapter: on event, refetch fresh data, store as one row  
+- LLM **distills** data artifact→ one-line question, summary, resolution, entities and identity refs  
+- Embed the distillate and optional chunks, not the raw dump  
+- GitHub / wiki / custom DBs, and other sources where data lives via the same schema; teams add connectors as needed
+
+### Retrieve
+
+Fuse:
+
+| Signal | Why |
+|---|---|
+| Full-text / BM25 | Exact tokens |
+| Embeddings | Paraphrase |
+| IDF | Rare terms over filler |
+| Age decay | Newer wins when tied |
+
+Rerank. Cite sources. RBAC inherited from IdP and integrated with Supabase Auth and RLS.
+
+## Summary
+
+- Meet data where it lives  
+- Distill noisy information before embedding  
+- Hybrid ranking, not cosine-only  
+- Freshness + permissions as first-class  
+- Boring stack
 - Supabase Auth and Postgres RLS establish user and workspace access.
 - Postgres stores tenant-scoped financial data, immutable domain/audit events, export/deletion state, and PGMQ jobs.
 - Vault holds provider credentials and per-connection bank sessions.
@@ -14,9 +86,9 @@ This is a fresh cloud deployment. It does not deploy or publicly serve the forme
 
 The client supplies `x-finch-workspace` only as a requested context. The API verifies active membership from the authenticated Supabase user before every workspace action.
 
-## MCP status
+## MCP
 
-`@finch/mcp` is transitional, in-process test support for legacy regressions. It is not a deployable public MCP runtime, and its legacy stdio executable fails closed. The approved replacement is an agent-only Streamable HTTP MCP exposing `exec` and `docs`; it is not implemented yet.
+`@finch/mcp`  is an agent-only interface using Streamable HTTP MCP exposing `exec` and `docs`; it is a typescript isolate sandboxed process that allows an agent to compose the `@finch/lib` typescript library. This allows dynamic programtic composition of finch. 
 
 ## Local development
 
